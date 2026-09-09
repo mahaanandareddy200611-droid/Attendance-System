@@ -34,10 +34,8 @@ app.get("/", (req, res) => {
     res.status(200).json({
         success: true,
         message:
-            "Attendance system backend running 🚀"
-    });
-});
-
+            "Attendance system backend running 🚀"})
+    })
 
 
 
