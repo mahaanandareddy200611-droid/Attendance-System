@@ -1,4 +1,4 @@
-
+import { Signup as signupuser } from "../services/auth.service";
 import { useState } from "react";
 import ForgotPassword from "./ForgotPassword";
 import { Link } from "react-router-dom";
@@ -10,18 +10,18 @@ function Signup() {
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
 
     if (password !== confirmPassword) {
       alert("Passwords do not match");
       return;
     }
-
+    
     console.log("Name:", name);
     console.log("Email:", email);
     console.log("Password:", password);
-  };
+  }
 
   return (
     <div className="auth-page">

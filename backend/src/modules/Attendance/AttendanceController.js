@@ -4,44 +4,54 @@ const asyncHandler =
 const attendanceService =
     require("./AttendanceService");
 
-
 exports.createSession =
     asyncHandler(async (req, res) => {
 
         const {
-            courseCode,
-            section
+            sectionId
         } = req.body;
 
         const session =
-            await attendanceService.createSession({
-                lecturerId:
-                    req.user.id,
-                courseCode,
-                section
-            });
+            await attendanceService
+                .createSession({
+                    lecturerId:
+                        req.user.id,
 
-        res.status(201).json({
+                    sectionId
+                });
+
+        return res.status(201).json({
             success: true,
             message:
                 "Attendance session created",
+
             data: {
                 sessionId:
                     session.sessionId,
+
+                sectionId:
+                    session.sectionId,
+
                 courseCode:
                     session.courseCode,
+
                 section:
                     session.section,
+
                 status:
                     session.status,
+
                 startedAt:
                     session.startedAt,
+
                 expiresAt:
-                    session.expiresAt
+                    session.expiresAt,
+
+                eligibleStudentCount:
+                    session.eligibleStudentCount
             }
         });
     });
-
 
 exports.getQr =
     asyncHandler(async (req, res) => {

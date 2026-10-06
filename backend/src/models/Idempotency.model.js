@@ -6,7 +6,12 @@ const IdempotencySchema = new mongoose.Schema(
             type: String,
             required: true,
             unique: true,
-            index: true
+            trim: true
+        },
+
+        fingerprint: {
+            type: String,
+            required: true
         },
 
         studentId: {
@@ -24,15 +29,29 @@ const IdempotencySchema = new mongoose.Schema(
         status: {
             type: String,
             enum: ["PROCESSING", "COMPLETED"],
+            required: true,
             default: "PROCESSING"
         },
 
         responseStatus: {
-            type: Number
+            type: Number,
+            default: null
         },
 
         responseBody: {
-            type: mongoose.Schema.Types.Mixed
+            type: mongoose.Schema.Types.Mixed,
+            default: null
+        },
+
+        ownerToken: {
+            type: String,
+            default: null
+        },
+
+        leaseUntil: {
+            type: Date,
+            default: null,
+            index: true
         },
 
         createdAt: {
@@ -41,6 +60,11 @@ const IdempotencySchema = new mongoose.Schema(
             expires: 60 * 10
         }
     }
+);
+
+IdempotencySchema.index(
+    { key: 1 },
+    { unique: true }
 );
 
 module.exports = mongoose.model(

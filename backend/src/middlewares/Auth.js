@@ -1,31 +1,67 @@
-const jwt = require("jsonwebtoken");
-const AppError = require("../utils/AppError");
+const jwt =
+    require("jsonwebtoken");
 
-const Auth = async(req , res, next)=>{
-    
-        // here we get token like this 
-        const AuthHeader = req.headers.authorization;
+const AppError =
+    require("../utils/AppError");
 
-        if(!AuthHeader){
-            console.log("token does not exist ")
-            throw new AppError("token not found! , please Login again",401)
-        }
+const Auth = (req, res, next) => {
 
-        if(!AuthHeader.startsWith("Bearer ")){
-            throw new AppError("Invalid authorization format.",401);
-            
-        }
-        const token = AuthHeader.split(" ")[1];
-        // now we have token lets verify it .
-        try{
-        const verfiedToken = jwt.verify(token,process.env.JWT_SECRET);
-        //    this was not needed because jwt.verify diretly does this job! it checks:
-        //   token authentic?   secret correct?   token expired?  token modified? 
+    const authHeader =
+        req.headers.authorization;
 
-        req.user = verfiedToken;
-        next();
-        }catch(error){
-            throw new AppError("Invalid or expired token, please login again",401)
-        }
+    if (!authHeader) {
+        return next(
+            new AppError(
+                "Token not found. Please login again.",
+                401
+            )
+        );
     }
-module.exports=Auth;
+
+    if (
+        !authHeader.startsWith("Bearer ")
+    ) {
+        return next(
+            new AppError(
+                "Invalid authorization format.",
+                401
+            )
+        );
+    }
+
+    const token =
+        authHeader.slice(7).trim();
+
+    if (!token) {
+        return next(
+            new AppError(
+                "Token not found. Please login again.",
+                401
+            )
+        );
+    }
+
+    try {
+
+        const verifiedToken =
+            jwt.verify(
+                token,
+                process.env.JWT_SECRET
+            );
+
+        req.user = verifiedToken;
+
+        next();
+
+    } catch (error) {
+
+        return next(
+            new AppError(
+                "Invalid or expired token. Please login again.",
+                401
+            )
+        );
+    }
+};
+
+module.exports = Auth;

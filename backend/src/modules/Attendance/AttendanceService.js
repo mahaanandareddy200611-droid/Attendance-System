@@ -1,17 +1,31 @@
 const crypto = require("crypto");
 
+const mongoose =
+    require("mongoose");
+
+const ClassSection =
+    require("../../models/ClassSection.model");
+
+const Enrollment =
+    require("../../models/Enrollment.model");
+
+const AttendanceSessionStudent =
+    require("../../models/AttendanceSessionStudent.model");
+
 const AttendanceSession =
     require("../../models/AttendanceSession.model");
+const {
+    createOrGetAttendanceRecord
+} = require("./AttendanceRecordService");
 
-const AttendanceRecord =
-    require("../../models/AttendanceRecord.model");
 
 const AttendanceAttempt =
     require("../../models/AttendanceAttempt.model");
 
-const Idempotency =
-    require("../../models/Idempotency.model");
-
+const {
+    claimIdempotency,
+    completeIdempotency
+} = require("./IdempotencyService");
 const AuditEvent =
     require("../../models/AuditEvent.model");
 
@@ -24,58 +38,363 @@ const {
     isSlotFresh
 } = require("../../utils/attendanceToken");
 
-
 exports.createSession = async ({
     lecturerId,
-    courseCode,
-    section
+    sectionId
 }) => {
 
-    if (!courseCode || !section) {
+    if (!sectionId) {
         throw new AppError(
-            "courseCode and section are required",
+            "sectionId is required",
             400
         );
     }
 
-    const durationMinutes =
-        Number(
-            process.env.ATTENDANCE_SESSION_MINUTES
-        ) || 60;
+    const dbSession =
+        await mongoose.startSession();
 
-    const sessionId =
-        crypto.randomUUID();
+    try {
 
-    const startedAt = new Date();
+        let createdSession;
 
-    const expiresAt =
-        new Date(
-            startedAt.getTime() +
-            durationMinutes * 60 * 1000
+
+        await dbSession.withTransaction(
+            async () => {
+
+                /*
+                --------------------------------------------------
+                1. FIND ACTIVE SECTION
+                --------------------------------------------------
+                */
+
+                const section =
+                    await ClassSection
+                        .findOne({
+                            _id: sectionId,
+                            status: "ACTIVE"
+                        })
+                        .populate(
+                            "courseId",
+                            "code name"
+                        )
+                        .session(dbSession);
+
+                if (!section) {
+                    throw new AppError(
+                        "Active class section not found",
+                        404
+                    );
+                }
+
+
+                /*
+                --------------------------------------------------
+                2. VERIFY LECTURER ASSIGNMENT
+                --------------------------------------------------
+                */
+
+                const lecturerAssigned =
+                    section.lecturers.some(
+                        (id) =>
+                            String(id) ===
+                            String(lecturerId)
+                    );
+
+                if (!lecturerAssigned) {
+                    throw new AppError(
+                        "You are not assigned to this class section",
+                        403
+                    );
+                }
+
+
+                /*
+                --------------------------------------------------
+                3. EXPIRE OLD SESSION
+                --------------------------------------------------
+                */
+
+                const now =
+                    new Date();
+
+                await AttendanceSession.updateMany(
+                    {
+                        sectionId,
+                        status: "ACTIVE",
+                        expiresAt: {
+                            $lte: now
+                        }
+                    },
+                    {
+                        $set: {
+                            status: "EXPIRED",
+                            endedAt: now
+                        },
+                        $inc: {
+                            version: 1
+                        }
+                    }
+                ).session(dbSession);
+
+
+                /*
+                --------------------------------------------------
+                4. CHECK ACTIVE SESSION
+                --------------------------------------------------
+                */
+
+                const existingSession =
+                    await AttendanceSession.findOne({
+                        sectionId,
+                        status: "ACTIVE",
+                        expiresAt: {
+                            $gt: now
+                        }
+                    }).session(dbSession);
+
+                if (existingSession) {
+
+                    throw new AppError(
+                        "An active attendance session already exists for this section",
+                        409
+                    );
+                }
+
+
+                /*
+                --------------------------------------------------
+                5. GET ACTIVE ENROLLMENTS
+                --------------------------------------------------
+                */
+
+                const enrollments =
+                    await Enrollment
+                        .find({
+                            sectionId,
+                            status: "ACTIVE"
+                        })
+                        .select(
+                            "_id studentId rollNumber"
+                        )
+                        .lean()
+                        .session(dbSession);
+
+                if (
+                    enrollments.length === 0
+                ) {
+                    throw new AppError(
+                        "No active students are enrolled in this section",
+                        400
+                    );
+                }
+
+
+                /*
+                --------------------------------------------------
+                6. SESSION TIMING
+                --------------------------------------------------
+                */
+
+                const durationMinutes =
+                    Number(
+                        process.env
+                            .ATTENDANCE_SESSION_MINUTES
+                    ) || 60;
+
+                const startedAt =
+                    now;
+
+                const expiresAt =
+                    new Date(
+                        startedAt.getTime() +
+                        durationMinutes *
+                        60 *
+                        1000
+                    );
+
+
+                /*
+                --------------------------------------------------
+                7. CREATE PUBLIC SESSION ID
+                --------------------------------------------------
+                */
+
+                const sessionId =
+                    crypto.randomUUID();
+
+
+                /*
+                --------------------------------------------------
+                8. CREATE SESSION
+                --------------------------------------------------
+                */
+
+                const sessionDocuments =
+                    await AttendanceSession.create(
+                        [
+                            {
+                                sessionId,
+
+                                sectionId,
+
+                                courseCode:
+                                    section.courseId.code,
+
+                                section:
+                                    section.name,
+
+                                lecturerId,
+
+                                status: "ACTIVE",
+
+                                startedAt,
+
+                                expiresAt,
+
+                                endedAt: null,
+
+                                classroomSnapshot: {
+                                    code:
+                                        section.room.code,
+
+                                    latitude:
+                                        section.room.latitude,
+
+                                    longitude:
+                                        section.room.longitude,
+
+                                    geofenceRadiusMeters:
+                                        section.room
+                                            .geofenceRadiusMeters
+                                },
+
+                                eligibleStudentCount:
+                                    enrollments.length,
+
+                                version: 1
+                            }
+                        ],
+                        {
+                            session:
+                                dbSession
+                        }
+                    );
+
+                createdSession =
+                    sessionDocuments[0];
+
+
+                /*
+                --------------------------------------------------
+                9. FREEZE SESSION ROSTER
+                --------------------------------------------------
+                */
+
+                const rosterDocuments =
+                    enrollments.map(
+                        (enrollment) => ({
+                            sessionId:
+                                createdSession._id,
+
+                            studentId:
+                                enrollment.studentId,
+
+                            enrollmentId:
+                                enrollment._id,
+
+                            rollNumber:
+                                enrollment.rollNumber,
+
+                            status:
+                                "ELIGIBLE"
+                        })
+                    );
+
+                await AttendanceSessionStudent
+                    .insertMany(
+                        rosterDocuments,
+                        {
+                            session:
+                                dbSession
+                        }
+                    );
+
+
+                /*
+                --------------------------------------------------
+                10. AUDIT
+                --------------------------------------------------
+                */
+
+                await AuditEvent.create(
+                    [
+                        {
+                            event:
+                                "ATTENDANCE_SESSION_CREATED",
+
+                            userId:
+                                lecturerId,
+
+                            sessionId:
+                                createdSession._id,
+
+                            metadata: {
+                                publicSessionId:
+                                    sessionId,
+
+                                sectionId,
+
+                                courseCode:
+                                    section
+                                        .courseId
+                                        .code,
+
+                                section:
+                                    section.name,
+
+                                eligibleStudentCount:
+                                    enrollments.length
+                            }
+                        }
+                    ],
+                    {
+                        session:
+                            dbSession
+                    }
+                );
+            }
         );
 
-    const session =
-        await AttendanceSession.create({
-            sessionId,
-            courseCode,
-            section,
-            lecturerId,
-            status: "ACTIVE",
-            startedAt,
-            expiresAt
-        });
 
-    await AuditEvent.create({
-        event: "ATTENDANCE_SESSION_CREATED",
-        userId: lecturerId,
-        sessionId: session._id,
-        metadata: {
-            courseCode,
-            section
+        return createdSession;
+
+
+    } catch (error) {
+
+        /*
+        * Concurrent session creation:
+        *
+        * Two lecturers/requests can race.
+        * MongoDB's partial unique index guarantees
+        * only one ACTIVE session for this section.
+        */
+
+        if (
+            error.code === 11000
+        ) {
+
+            throw new AppError(
+                "An active attendance session already exists for this section",
+                409
+            );
         }
-    });
 
-    return session;
+        throw error;
+
+    } finally {
+
+        await dbSession.endSession();
+    }
 };
 
 
@@ -190,41 +509,7 @@ exports.verifyAttendance = async ({
         );
     }
 
-    /*
-    --------------------------------------------------
-    1. CHECK IDEMPOTENCY
-    --------------------------------------------------
-    */
 
-    const existingRequest =
-        await Idempotency.findOne({
-            key: idempotencyKey
-        });
-
-    if (existingRequest) {
-
-        if (
-            String(existingRequest.studentId)
-            !== String(studentId)
-        ) {
-            throw new AppError(
-                "Idempotency key belongs to another user",
-                409
-            );
-        }
-
-        if (
-            existingRequest.status ===
-            "COMPLETED"
-        ) {
-
-            return {
-                replayed: true,
-                status: existingRequest.responseStatus,
-                body: existingRequest.responseBody
-            };
-        }
-    }
 
     /*
     --------------------------------------------------
@@ -315,167 +600,85 @@ exports.verifyAttendance = async ({
         );
     }
 
-    /*
-    --------------------------------------------------
-    6. CREATE IDEMPOTENCY RECORD
-    --------------------------------------------------
-    */
+/*
+--------------------------------------------------
+6. ATOMIC IDEMPOTENCY CLAIM
+--------------------------------------------------
+*/
 
-    try {
+const idempotencyResult =
+    await claimIdempotency({
+        key: idempotencyKey,
+        studentId,
+        sessionId: session._id,
+        token
+    });
 
-        await Idempotency.create({
-            key: idempotencyKey,
-            studentId,
-            sessionId: session._id,
-            status: "PROCESSING"
-        });
+if (idempotencyResult.replayed) {
 
-    } catch (error) {
+    return {
+        replayed: true,
+        status:
+            idempotencyResult.responseStatus,
+        body:
+            idempotencyResult.responseBody
+    };
+}
 
-        if (
-            error.code === 11000
-        ) {
+const {
+    ownerToken
+} = idempotencyResult;
 
-            const request =
-                await Idempotency.findOne({
-                    key: idempotencyKey
-                });
+   
+/*
+--------------------------------------------------
+7 + 8. ATOMIC ATTENDANCE CREATION
+--------------------------------------------------
+*/
 
-            if (
-                request &&
-                request.status === "COMPLETED"
-            ) {
-
-                return {
-                    replayed: true,
-                    status:
-                        request.responseStatus,
-                    body:
-                        request.responseBody
-                };
-            }
-
-        } else {
-            throw error;
-        }
+const {
+    record: attendanceRecord,
+    created
+} = await createOrGetAttendanceRecord({
+    sessionId: session._id,
+    studentId,
+    courseCode: session.courseCode,
+    section: session.section,
+    verification: {
+        qr: true,
+        device: false,
+        proximity: false,
+        biometric: false
     }
+});
 
-    /*
-    --------------------------------------------------
-    7. CHECK WHETHER ALREADY MARKED
-    --------------------------------------------------
-    */
+if (!created) {
 
-    const existingAttendance =
-        await AttendanceRecord.findOne({
-            sessionId: session._id,
-            studentId
-        });
+    const response = {
+        success: true,
+        message: "Attendance already marked",
+        attendanceId:
+            attendanceRecord._id,
+        alreadyMarked: true
+    };
 
-    if (existingAttendance) {
+    await completeIdempotency({
+        key: idempotencyKey,
+        ownerToken,
+        responseStatus: 200,
+        responseBody: response
+    });
 
-        const response = {
-            success: true,
-            message:
-                "Attendance already marked",
-            attendanceId:
-                existingAttendance._id,
-            alreadyMarked: true
-        };
+    await AttendanceAttempt.create({
+        sessionId: session._id,
+        studentId,
+        result: "ALREADY_MARKED",
+        ipAddress,
+        userAgent
+    });
 
-        await Idempotency.updateOne(
-            { key: idempotencyKey },
-            {
-                $set: {
-                    status: "COMPLETED",
-                    responseStatus: 200,
-                    responseBody: response
-                }
-            }
-        );
-
-        await AttendanceAttempt.create({
-            sessionId: session._id,
-            studentId,
-            result: "ALREADY_MARKED",
-            ipAddress,
-            userAgent
-        });
-
-        return response;
-    }
-
-    /*
-    --------------------------------------------------
-    8. CREATE ATTENDANCE
-    --------------------------------------------------
-    */
-
-    let attendance;
-
-    try {
-
-        attendance =
-            await AttendanceRecord.create({
-                sessionId: session._id,
-                studentId,
-                courseCode:
-                    session.courseCode,
-                section:
-                    session.section,
-                markedAt: new Date(),
-
-                verification: {
-                    qr: true,
-                    device: false,
-                    proximity: false,
-                    biometric: false
-                }
-            });
-
-    } catch (error) {
-
-        /*
-        MongoDB unique index protects us
-        against race-condition duplicates.
-        */
-
-        if (
-            error.code === 11000
-        ) {
-
-            const existing =
-                await AttendanceRecord.findOne({
-                    sessionId:
-                        session._id,
-                    studentId
-                });
-
-            const response = {
-                success: true,
-                message:
-                    "Attendance already marked",
-                attendanceId:
-                    existing?._id,
-                alreadyMarked: true
-            };
-
-            await Idempotency.updateOne(
-                { key: idempotencyKey },
-                {
-                    $set: {
-                        status: "COMPLETED",
-                        responseStatus: 200,
-                        responseBody: response
-                    }
-                }
-            );
-
-            return response;
-        }
-
-        throw error;
-    }
+    return response;
+}
 
     /*
     --------------------------------------------------
@@ -502,9 +705,9 @@ exports.verifyAttendance = async ({
         userId: studentId,
         sessionId: session._id,
         metadata: {
-            attendanceId:
-                attendance._id
-        }
+    attendanceId:
+        attendanceRecord._id
+}
     });
 
     /*
@@ -522,16 +725,12 @@ exports.verifyAttendance = async ({
         alreadyMarked: false
     };
 
-    await Idempotency.updateOne(
-        { key: idempotencyKey },
-        {
-            $set: {
-                status: "COMPLETED",
-                responseStatus: 201,
-                responseBody: response
-            }
-        }
-    );
+    await completeIdempotency({
+    key: idempotencyKey,
+    ownerToken,
+    responseStatus: 201,
+    responseBody: response
+});
 
     return response;
 };
