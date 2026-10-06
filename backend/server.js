@@ -1,116 +1,57 @@
-require("dotenv").config();
+const dotenv = require("dotenv");
+dotenv.config();
 
-const express = require("express");
-const cors = require("cors");
+const app = require("./src/app");
+const connectDB = require("./src/config/mongoDb");
+const config = require("./src/config/config");
 
-const connectDB =
-    require("./src/config/mongoDb");
+const startServer = async () => {
+    try {
+        await connectDB();
 
-const AttendanceRouter =require("./src/modules/Attendance/AttendanceRouter");
-
-const AuthRouter =require("./src/modules/Auth/AuthRouter");
-
-const app = express();
-
-
-app.use(
-    cors({
-        origin: true,
-        credentials: true
-    })
-);
-
-app.use(
-    express.json({
-        limit: "1mb"
-    })
-);
-
-
-
-
-app.get("/", (req, res) => {
-
-    res.status(200).json({
-        success: true,
-        message:
-            "Attendance system backend running 🚀"})
-    })
-
-
-
-app.use(
-    "/auth",
-    AuthRouter
-);
-
-
-
-
-app.use(
-    "/attendance",
-    AttendanceRouter
-);
-
-
-
-
-app.use(
-    (req, res) => {
-
-        res.status(404).json({
-            success: false,
-            message:
-                `Route not found: ${req.method} ${req.originalUrl}`
-        });
-    }
-);
-
-
-
-app.use(
-    (err, req, res, next) => {
-
-        console.error(err);
-
-        const statusCode =
-            err.statusCode || 500;
-
-        res.status(statusCode).json({
-            success: false,
-
-            message:
-                err.message ||
-                "Internal Server Error"
-        });
-    }
-);
-
-
-
-
-connectDB()
-    .then(() => {
-
-        const PORT =
-            process.env.PORT || 3000;
-
-        app.listen(
-            PORT,
+        const server = app.listen(
+            config.port,
             () => {
-
                 console.log(
-                    `Server running on port ${PORT}`
+                    `Attendance backend running on port ${config.port}`
                 );
             }
         );
-    })
-    .catch((error) => {
 
+        const shutdown = async (signal) => {
+            console.log(`${signal} received. Shutting down...`);
+
+            server.close(async () => {
+                try {
+                    const mongoose = require("mongoose");
+
+                    await mongoose.connection.close();
+
+                    console.log("MongoDB connection closed");
+
+                    process.exit(0);
+                } catch (error) {
+                    console.error(
+                        "Shutdown failed:",
+                        error
+                    );
+
+                    process.exit(1);
+                }
+            });
+        };
+
+        process.on("SIGINT", () => shutdown("SIGINT"));
+        process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+    } catch (error) {
         console.error(
             "Server startup failed:",
             error.message
         );
 
         process.exit(1);
-    });
+    }
+};
+
+startServer();

@@ -45,8 +45,24 @@ const AuthSchema = new mongoose.Schema(
 
         role: {
             type: String,
-            enum: ["Admin", "Lecturer", "Student"],
+            enum: [
+                "Admin",
+                "Lecturer",
+                "Student"
+            ],
             default: "Student",
+            index: true
+        },
+
+        status: {
+            type: String,
+            enum: [
+                "ACTIVE",
+                "INACTIVE",
+                "SUSPENDED"
+            ],
+            default: "ACTIVE",
+            index: true
         },
 
         passwordResetOtpHash: {
@@ -78,6 +94,7 @@ const AuthSchema = new mongoose.Schema(
     }
 );
 
-const User = mongoose.model("User", AuthSchema);
+const User =
+    mongoose.model("User", AuthSchema);
 
 module.exports = User;
