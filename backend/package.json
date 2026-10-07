@@ -19,7 +19,9 @@
     "joi": "^18.2.8",
     "jsonwebtoken": "^9.0.3",
     "mongoose": "^9.9.3",
+    "multer": "^2.4.0",
     "nodemailer": "^10.0.0",
-    "qrcode": "^1.5.4"
+    "qrcode": "^1.5.4",
+    "redis": "^6.3.0"
   }
 }

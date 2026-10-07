@@ -5,6 +5,13 @@ const crypto = require("crypto");
 const academicRoutes =
     require("./modules/academic/AcademicRoutes");
 
+const DeviceRoutes =
+    require("./modules/Device/DeviceRoutes");
+    
+
+const BiometricRoutes =
+    require("./modules/Biometric/BiometricRoutes");
+
 const app = express();
 
 /*
@@ -177,9 +184,22 @@ app.get("/api/v1/health", (req, res) => {
   });
 });
 
+
 app.use(
     "/api/v1/academic",
     academicRoutes
+);
+
+app.use(
+    "/api/v1/devices",
+    DeviceRoutes
+);  
+
+
+
+app.use(
+    "/api/v1/biometric",
+    BiometricRoutes
 );
 
 /*

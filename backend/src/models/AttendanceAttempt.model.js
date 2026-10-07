@@ -27,10 +27,11 @@ const AttendanceAttemptSchema = new mongoose.Schema(
                 "TOKEN_EXPIRED",
                 "SESSION_NOT_FOUND",
                 "SESSION_NOT_ACTIVE",
+                "NOT_ELIGIBLE",
                 "ALREADY_MARKED",
                 "INVALID_REQUEST"
             ],
-            required: true
+        required: true
         },
 
         ipAddress: {

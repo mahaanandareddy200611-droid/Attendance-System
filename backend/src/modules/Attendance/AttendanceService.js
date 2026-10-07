@@ -6,6 +6,11 @@ const mongoose =
 const ClassSection =
     require("../../models/ClassSection.model");
 
+const {
+    verify:
+        verifyBiometric
+} = require("../Biometric/BiometricService");
+
 const Enrollment =
     require("../../models/Enrollment.model");
 
@@ -14,10 +19,22 @@ const AttendanceSessionStudent =
 
 const AttendanceSession =
     require("../../models/AttendanceSession.model");
+
+const {
+    verifyAttendanceDevice
+} = require("../Device/DeviceService");
+
 const {
     createOrGetAttendanceRecord
 } = require("./AttendanceRecordService");
 
+const {
+    getCurrentChallenge,
+    verifyChallenge,
+    claimQrUse,
+    completeQrUse,
+    releaseQrUse
+} = require("./QrChallengeService");
 
 const AttendanceAttempt =
     require("../../models/AttendanceAttempt.model");
@@ -26,6 +43,7 @@ const {
     claimIdempotency,
     completeIdempotency
 } = require("./IdempotencyService");
+
 const AuditEvent =
     require("../../models/AuditEvent.model");
 
@@ -37,6 +55,13 @@ const {
     verifyAttendanceToken,
     isSlotFresh
 } = require("../../utils/attendanceToken");
+
+
+/*
+==================================================
+CREATE ATTENDANCE SESSION
+==================================================
+*/
 
 exports.createSession = async ({
     lecturerId,
@@ -56,7 +81,6 @@ exports.createSession = async ({
     try {
 
         let createdSession;
-
 
         await dbSession.withTransaction(
             async () => {
@@ -153,7 +177,6 @@ exports.createSession = async ({
                     }).session(dbSession);
 
                 if (existingSession) {
-
                     throw new AppError(
                         "An active attendance session already exists for this section",
                         409
@@ -238,40 +261,52 @@ exports.createSession = async ({
                                 sectionId,
 
                                 courseCode:
-                                    section.courseId.code,
+                                    section
+                                        .courseId
+                                        .code,
 
                                 section:
                                     section.name,
 
                                 lecturerId,
 
-                                status: "ACTIVE",
+                                status:
+                                    "ACTIVE",
 
                                 startedAt,
 
                                 expiresAt,
 
-                                endedAt: null,
+                                endedAt:
+                                    null,
 
                                 classroomSnapshot: {
                                     code:
-                                        section.room.code,
+                                        section
+                                            .room
+                                            .code,
 
                                     latitude:
-                                        section.room.latitude,
+                                        section
+                                            .room
+                                            .latitude,
 
                                     longitude:
-                                        section.room.longitude,
+                                        section
+                                            .room
+                                            .longitude,
 
                                     geofenceRadiusMeters:
-                                        section.room
+                                        section
+                                            .room
                                             .geofenceRadiusMeters
                                 },
 
                                 eligibleStudentCount:
                                     enrollments.length,
 
-                                version: 1
+                                version:
+                                    1
                             }
                         ],
                         {
@@ -372,11 +407,13 @@ exports.createSession = async ({
     } catch (error) {
 
         /*
-        * Concurrent session creation:
-        *
-        * Two lecturers/requests can race.
-        * MongoDB's partial unique index guarantees
-        * only one ACTIVE session for this section.
+        --------------------------------------------------
+        CONCURRENT SESSION CREATION
+        --------------------------------------------------
+
+        The partial unique index guarantees that only
+        one ACTIVE attendance session can exist for
+        a section.
         */
 
         if (
@@ -398,6 +435,12 @@ exports.createSession = async ({
 };
 
 
+/*
+==================================================
+GET CURRENT QR
+==================================================
+*/
+
 exports.getCurrentQr = async ({
     sessionId,
     lecturerId
@@ -409,6 +452,7 @@ exports.getCurrentQr = async ({
             lecturerId
         });
 
+
     if (!session) {
         throw new AppError(
             "Attendance session not found",
@@ -416,19 +460,29 @@ exports.getCurrentQr = async ({
         );
     }
 
-    if (session.status !== "ACTIVE") {
+
+    if (
+        session.status !==
+        "ACTIVE"
+    ) {
+
         throw new AppError(
             "Attendance session is not active",
             400
         );
     }
 
+
     if (
         new Date() >
         session.expiresAt
     ) {
 
-        session.status = "ENDED";
+        session.status =
+            "EXPIRED";
+
+        session.endedAt =
+            new Date();
 
         await session.save();
 
@@ -438,18 +492,49 @@ exports.getCurrentQr = async ({
         );
     }
 
+
+    const challenge =
+        await getCurrentChallenge({
+            sessionId:
+                session.sessionId
+        });
+
+
     const token =
-        generateAttendanceToken(
-            session.sessionId
-        );
+        generateAttendanceToken({
+            sessionId:
+                session.sessionId,
+
+            slot:
+                challenge.slot,
+
+            nonce:
+                challenge.nonce
+        });
+
 
     return {
-        sessionId: session.sessionId,
+        sessionId:
+            session.sessionId,
+
         token,
-        expiresAt: session.expiresAt
+
+        expiresAt:
+            session.expiresAt,
+
+        refreshMs:
+            Number(
+                process.env.QR_REFRESH_MS
+            ) || 250
     };
 };
 
+
+/*
+==================================================
+END ATTENDANCE SESSION
+==================================================
+*/
 
 exports.endSession = async ({
     sessionId,
@@ -469,31 +554,55 @@ exports.endSession = async ({
         );
     }
 
-    if (session.status === "ENDED") {
+    if (
+        session.status === "ENDED"
+    ) {
         return session;
     }
 
-    session.status = "ENDED";
+    session.status =
+        "ENDED";
 
     await session.save();
 
     await AuditEvent.create({
-        event: "ATTENDANCE_SESSION_ENDED",
-        userId: lecturerId,
-        sessionId: session._id
+        event:
+            "ATTENDANCE_SESSION_ENDED",
+
+        userId:
+            lecturerId,
+
+        sessionId:
+            session._id
     });
 
     return session;
 };
 
 
+/*
+==================================================
+VERIFY ATTENDANCE
+==================================================
+*/
+
 exports.verifyAttendance = async ({
     studentId,
     token,
+    deviceId,
+    deviceSignature,
     idempotencyKey,
+    biometricChallengeId,
+    biometricAssertion,
     ipAddress,
     userAgent
 }) => {
+
+    /*
+    --------------------------------------------------
+    1. VALIDATE REQUIRED INPUT
+    --------------------------------------------------
+    */
 
     if (!token) {
         throw new AppError(
@@ -510,7 +619,6 @@ exports.verifyAttendance = async ({
     }
 
 
-
     /*
     --------------------------------------------------
     2. VERIFY QR SIGNATURE
@@ -524,8 +632,12 @@ exports.verifyAttendance = async ({
 
         await AttendanceAttempt.create({
             studentId,
-            result: "INVALID_TOKEN",
+
+            result:
+                "INVALID_TOKEN",
+
             ipAddress,
+
             userAgent
         });
 
@@ -539,6 +651,7 @@ exports.verifyAttendance = async ({
         sid,
         slot
     } = tokenResult.payload;
+
 
     /*
     --------------------------------------------------
@@ -554,6 +667,7 @@ exports.verifyAttendance = async ({
         );
     }
 
+
     /*
     --------------------------------------------------
     4. FIND SESSION
@@ -566,31 +680,42 @@ exports.verifyAttendance = async ({
         });
 
     if (!session) {
+
         throw new AppError(
             "Attendance session not found",
             404
         );
     }
 
+
     /*
     --------------------------------------------------
-    5. SESSION STATUS
+    5. VERIFY SESSION STATUS
     --------------------------------------------------
     */
 
-    if (session.status !== "ACTIVE") {
+    if (
+        session.status !==
+        "ACTIVE"
+    ) {
+
         throw new AppError(
             "Attendance session is not active",
             400
         );
     }
 
+
     if (
         new Date() >
         session.expiresAt
     ) {
 
-        session.status = "ENDED";
+        session.status =
+            "EXPIRED";
+
+        session.endedAt =
+            new Date();
 
         await session.save();
 
@@ -600,138 +725,734 @@ exports.verifyAttendance = async ({
         );
     }
 
-/*
---------------------------------------------------
-6. ATOMIC IDEMPOTENCY CLAIM
---------------------------------------------------
-*/
 
-const idempotencyResult =
-    await claimIdempotency({
-        key: idempotencyKey,
-        studentId,
-        sessionId: session._id,
-        token
+    /*
+    --------------------------------------------------
+    6. VERIFY REDIS QR CHALLENGE
+    --------------------------------------------------
+    */
+
+    const challengeValid =
+        await verifyChallenge({
+            sessionId:
+                session.sessionId,
+
+            slot,
+
+            nonce:
+                tokenResult.payload.nonce
+        });
+
+
+    if (!challengeValid) {
+
+        throw new AppError(
+            "Attendance QR challenge is invalid or expired",
+            401
+        );
+    }
+
+
+    /*
+    --------------------------------------------------
+    7. VERIFY SESSION ROSTER
+    --------------------------------------------------
+    */
+
+    const rosterEntry =
+        await AttendanceSessionStudent.findOne({
+            sessionId:
+                session._id,
+
+            studentId
+        });
+
+
+    /*
+    --------------------------------------------------
+    STUDENT NOT IN FROZEN ROSTER
+    --------------------------------------------------
+    */
+
+    if (!rosterEntry) {
+
+        await AttendanceAttempt.create({
+            sessionId:
+                session._id,
+
+            studentId,
+
+            result:
+                "NOT_ELIGIBLE",
+
+            ipAddress,
+
+            userAgent
+        });
+
+        throw new AppError(
+            "You are not eligible for this attendance session",
+            403
+        );
+    }
+
+
+    /*
+    --------------------------------------------------
+    ALREADY PRESENT
+    --------------------------------------------------
+    */
+
+    if (
+        rosterEntry.status ===
+        "PRESENT"
+    ) {
+
+        await AttendanceAttempt.create({
+            sessionId:
+                session._id,
+
+            studentId,
+
+            result:
+                "ALREADY_MARKED",
+
+            ipAddress,
+
+            userAgent
+        });
+
+        throw new AppError(
+            "Attendance has already been marked",
+            409
+        );
+    }
+
+
+    /*
+    --------------------------------------------------
+    ONLY ELIGIBLE / LATE CAN CONTINUE
+    --------------------------------------------------
+    */
+
+    if (
+        ![
+            "ELIGIBLE",
+            "LATE"
+        ].includes(
+            rosterEntry.status
+        )
+    ) {
+
+        throw new AppError(
+            "Student cannot mark attendance in the current state",
+            403
+        );
+    }
+
+    /*
+    --------------------------------------------------
+    9. ATOMIC IDEMPOTENCY CLAIM
+    --------------------------------------------------
+    */
+
+    const idempotencyResult =
+        await claimIdempotency({
+            key:
+                idempotencyKey,
+
+            studentId,
+
+            sessionId:
+                session._id,
+
+            token,
+            deviceId
+        });
+
+
+    if (
+        idempotencyResult.replayed
+    ) {
+
+        return {
+            replayed:
+                true,
+
+            status:
+                idempotencyResult
+                    .responseStatus,
+
+            body:
+                idempotencyResult
+                    .responseBody
+        };
+    }
+
+    
+
+    
+
+
+    const {
+        ownerToken
+    } = idempotencyResult;
+
+
+    /*
+    --------------------------------------------------
+    8. DEVICE CRYPTOGRAPHIC VERIFICATION
+    --------------------------------------------------
+    */
+
+    if (
+        !deviceId ||
+        !deviceSignature
+    ) {
+
+        throw new AppError(
+            "Registered device proof is required",
+            401
+        );
+    }
+
+
+    await verifyAttendanceDevice({
+        userId:
+            studentId,
+
+        deviceId,
+
+        signature:
+            deviceSignature,
+
+        sessionId:
+            session.sessionId,
+
+        token,
+
+        idempotencyKey
     });
 
-if (idempotencyResult.replayed) {
 
-    return {
-        replayed: true,
-        status:
-            idempotencyResult.responseStatus,
-        body:
-            idempotencyResult.responseBody
-    };
-}
+    
 
-const {
-    ownerToken
-} = idempotencyResult;
+    /*
+    --------------------------------------------------
+    10. QR REPLAY CLAIM
+    --------------------------------------------------
+    */
 
-   
-/*
---------------------------------------------------
-7 + 8. ATOMIC ATTENDANCE CREATION
---------------------------------------------------
-*/
+    const qrUse =
+        await claimQrUse({
+            sessionId:
+                session._id.toString(),
 
-const {
-    record: attendanceRecord,
-    created
-} = await createOrGetAttendanceRecord({
-    sessionId: session._id,
-    studentId,
-    courseCode: session.courseCode,
-    section: session.section,
-    verification: {
-        qr: true,
-        device: false,
-        proximity: false,
-        biometric: false
+            studentId:
+                studentId.toString(),
+
+            slot,
+
+            nonce:
+                tokenResult.payload.nonce
+        });
+
+
+    /*
+    --------------------------------------------------
+    QR ALREADY CONSUMED
+    --------------------------------------------------
+    */
+
+    if (
+        qrUse.status ===
+        "CONSUMED"
+    ) {
+
+        const response = {
+            success:
+                false,
+
+            error: {
+                code:
+                    "QR_REPLAYED",
+
+                message:
+                    "This attendance QR has already been used"
+            }
+        };
+
+    try{    
+        await completeIdempotency({
+            key:
+                idempotencyKey,
+
+            ownerToken,
+
+            responseStatus:
+                409,
+
+            responseBody:
+                response
+        });
+
+
+        return {
+            replayed:
+                true,
+
+            status:
+                409,
+
+            body:
+                response
+        };
     }
-});
 
-if (!created) {
-
-    const response = {
-        success: true,
-        message: "Attendance already marked",
-        attendanceId:
-            attendanceRecord._id,
-        alreadyMarked: true
-    };
+     catch (error) {
 
     await completeIdempotency({
         key: idempotencyKey,
         ownerToken,
-        responseStatus: 200,
-        responseBody: response
+
+        responseStatus:
+            error.statusCode || 401,
+
+        responseBody: {
+            success: false,
+            error: {
+                code:
+                    "DEVICE_VERIFICATION_FAILED",
+                message:
+                    error.message
+            }
+        }
     });
 
-    await AttendanceAttempt.create({
-        sessionId: session._id,
-        studentId,
-        result: "ALREADY_MARKED",
-        ipAddress,
-        userAgent
-    });
+    throw error;
+}}
 
-    return response;
+    /*
+--------------------------------------------------
+BIOMETRIC VERIFICATION
+--------------------------------------------------
+*/
+
+if (
+    !biometricChallengeId ||
+    !biometricAssertion
+) {
+
+    throw new AppError(
+        "Biometric verification is required",
+        401
+    );
 }
+
+
+const biometricResult =
+    await verifyBiometric({
+        userId:
+            studentId,
+
+        sessionId:
+            session.sessionId,
+
+        challengeId:
+            biometricChallengeId,
+
+        assertion:
+            biometricAssertion
+    });
+
 
     /*
     --------------------------------------------------
-    9. ATTEMPT LOG
+    QR ALREADY PROCESSING
     --------------------------------------------------
     */
 
-    await AttendanceAttempt.create({
-        sessionId: session._id,
-        studentId,
-        result: "SUCCESS",
-        ipAddress,
-        userAgent
-    });
+    if (
+        qrUse.status ===
+        "PROCESSING"
+    ) {
+
+        const response = {
+            success:
+                false,
+
+            error: {
+                code:
+                    "QR_ALREADY_PROCESSING",
+
+                message:
+                    "This attendance QR verification is already being processed"
+            }
+        };
+
+
+        await completeIdempotency({
+            key:
+                idempotencyKey,
+
+            ownerToken,
+
+            responseStatus:
+                409,
+
+            responseBody:
+                response
+        });
+
+
+        return {
+            replayed:
+                true,
+
+            status:
+                409,
+
+            body:
+                response
+        };
+    }
+
 
     /*
     --------------------------------------------------
-    10. AUDIT
+    11. ATOMIC ATTENDANCE TRANSACTION
+    --------------------------------------------------
+
+    The following operations are committed
+    together or rolled back together:
+
+        AttendanceRecord
+        AttendanceSessionStudent
+        AttendanceAttempt
+        AuditEvent
     --------------------------------------------------
     */
 
-    await AuditEvent.create({
-        event: "ATTENDANCE_MARKED",
-        userId: studentId,
-        sessionId: session._id,
-        metadata: {
-    attendanceId:
-        attendanceRecord._id
-}
-    });
+    const dbSession =
+        await mongoose.startSession();
+
+    let attendanceRecord;
+
+    let attendanceCreated =
+        false;
+
+
+    try {
+
+        await dbSession.withTransaction(
+            async () => {
+
+                /*
+                ------------------------------------------
+                11.1 CREATE / GET ATTENDANCE RECORD
+                ------------------------------------------
+                */
+
+                const attendanceResult =
+                    await createOrGetAttendanceRecord({
+                        sessionId:
+                            session._id,
+
+                        studentId,
+
+                        courseCode:
+                            session.courseCode,
+
+                        section:
+                            session.section,
+
+                        verification: {
+                            qr:
+                                true,
+
+                            device:
+                                true,
+
+                            proximity:
+                                false,
+
+                            biometric:
+                                true
+                        },
+
+                        dbSession
+                    });
+
+
+                attendanceRecord =
+                    attendanceResult.record;
+
+                attendanceCreated =
+                    attendanceResult.created;
+
+
+                /*
+                ------------------------------------------
+                11.2 UPDATE SESSION ROSTER
+                ------------------------------------------
+                */
+
+                const rosterUpdate =
+                    await AttendanceSessionStudent
+                        .findOneAndUpdate(
+                            {
+                                sessionId:
+                                    session._id,
+
+                                studentId,
+
+                                status: {
+                                    $in: [
+                                        "ELIGIBLE",
+                                        "LATE"
+                                    ]
+                                }
+                            },
+                            {
+                                $set: {
+                                    status:
+                                        "PRESENT"
+                                }
+                            },
+                            {
+                                new:
+                                    true,
+
+                                session:
+                                    dbSession
+                            }
+                        );
+
+
+                /*
+                ------------------------------------------
+                If another concurrent request changed
+                the roster first, do not silently report
+                successful attendance.
+                ------------------------------------------
+                */
+
+                if (!rosterUpdate) {
+
+                    throw new AppError(
+                        "Attendance state changed during verification",
+                        409
+                    );
+                }
+
+
+                /*
+                ------------------------------------------
+                11.3 ATTEMPT LOG
+                ------------------------------------------
+                */
+
+                await AttendanceAttempt.create(
+                    [
+                        {
+                            sessionId:
+                                session._id,
+
+                            studentId,
+
+                            result:
+                                attendanceCreated
+                                    ? "SUCCESS"
+                                    : "ALREADY_MARKED",
+
+                            ipAddress,
+
+                            userAgent
+                        }
+                    ],
+                    {
+                        session:
+                            dbSession
+                    }
+                );
+
+
+                /*
+                ------------------------------------------
+                11.4 AUDIT LOG
+                ------------------------------------------
+                */
+
+                await AuditEvent.create(
+                    [
+                        {
+                            event:
+                                attendanceCreated
+                                    ? "ATTENDANCE_MARKED"
+                                    : "ATTENDANCE_ALREADY_MARKED",
+
+                            userId:
+                                studentId,
+
+                            sessionId:
+                                session._id,
+
+                            metadata: {
+                                attendanceId:
+                                    attendanceRecord._id
+                            }
+                        }
+                    ],
+                    {
+                        session:
+                            dbSession
+                    }
+                );
+            }
+        );
+
+
+    } catch (error) {
+
+        /*
+        --------------------------------------------------
+        TRANSACTION FAILED
+        --------------------------------------------------
+
+        Release the QR claim so another valid retry
+        can process the attendance.
+        */
+
+        await releaseQrUse({
+            key:
+                qrUse.key,
+
+            ownerToken:
+                qrUse.ownerToken
+        }).catch(
+            (releaseError) => {
+
+                console.error(
+                    "Failed to release QR claim:",
+                    releaseError
+                );
+            }
+        );
+
+        throw error;
+
+
+    } finally {
+
+        await dbSession.endSession();
+    }
+
 
     /*
     --------------------------------------------------
-    11. IDEMPOTENCY RESPONSE
+    12. COMPLETE IDEMPOTENCY RESPONSE
+    --------------------------------------------------
+    */
+
+    if (!attendanceCreated) {
+
+        const response = {
+            success:
+                true,
+
+            message:
+                "Attendance already marked",
+
+            attendanceId:
+                attendanceRecord._id,
+
+            alreadyMarked:
+                true
+        };
+
+
+        await completeIdempotency({
+            key:
+                idempotencyKey,
+
+            ownerToken,
+
+            responseStatus:
+                200,
+
+            responseBody:
+                response
+        });
+
+
+        await completeQrUse({
+            key:
+                qrUse.key,
+
+            ownerToken:
+                qrUse.ownerToken
+        });
+
+
+        return response;
+    }
+
+
+    /*
+    --------------------------------------------------
+    13. SUCCESS RESPONSE
     --------------------------------------------------
     */
 
     const response = {
-        success: true,
+        success:
+            true,
+
         message:
             "Attendance marked successfully",
+
         attendanceId:
-            attendance._id,
-        alreadyMarked: false
+            attendanceRecord._id,
+
+        alreadyMarked:
+            false
     };
 
+
+    /*
+    --------------------------------------------------
+    14. COMPLETE IDEMPOTENCY RESPONSE
+    --------------------------------------------------
+    */
+
     await completeIdempotency({
-    key: idempotencyKey,
-    ownerToken,
-    responseStatus: 201,
-    responseBody: response
-});
+        key:
+            idempotencyKey,
+
+        ownerToken,
+
+        responseStatus:
+            201,
+
+        responseBody:
+            response
+    });
+
+
+    /*
+    --------------------------------------------------
+    15. COMPLETE QR CLAIM
+    --------------------------------------------------
+    */
+
+    await completeQrUse({
+        key:
+            qrUse.key,
+
+        ownerToken:
+            qrUse.ownerToken
+    });
+
 
     return response;
 };
-
