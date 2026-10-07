@@ -12,23 +12,13 @@ const DeviceRoutes =
 const BiometricRoutes =
     require("./modules/Biometric/BiometricRoutes");
 
+const AuthRoutes =
+    require("./modules/Auth/AuthRouter");
+
 const app = express();
 
-/*
-|--------------------------------------------------------------------------
-| Basic application configuration
-|--------------------------------------------------------------------------
-*/
 
-/*
- * Do not expose:
- *
- * X-Powered-By: Express
- *
- * There is no useful reason for an external client to know
- * which framework our server is using.
- */
-app.disable("x-powered-by");
+app.disable("x-powered-by");  // to hide it was by this express framw work or some other 
 
 /*
 |--------------------------------------------------------------------------
@@ -50,17 +40,6 @@ app.use(helmet());
 |--------------------------------------------------------------------------
 */
 
-/*
- * During development we can use:
- *
- * CORS_ORIGINS=http://localhost:5173
- *
- * Multiple origins can later be separated by commas.
- *
- * Requests which do not contain an Origin header are allowed.
- * This is useful because a native mobile application is not
- * the same thing as a browser origin.
- */
 app.use(
   cors({
     origin(origin, callback) {
@@ -68,7 +47,7 @@ app.use(
         return callback(null, true);
       }
 
-      const allowedOrigins = (process.env.CORS_ORIGINS || "")
+      const allowedOrigins = (process.env.CORS_ORIGINS)
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean);
@@ -113,15 +92,7 @@ app.use(
 */
 
 /*
- * Every request receives an ID.
  *
- * Example:
- *
- * Client
- *   |
- *   | POST /api/v1/...
- *   |
- *   v
  * Backend
  *   |
  *   +---- requestId = 8c0...
@@ -146,7 +117,7 @@ app.use((req, res, next) => {
   ) {
     req.id = incomingRequestId;
   } else {
-    req.id = crypto.randomUUID();
+    req.id = crypto.randomUUID(); // for each request we set an id for the use od distributed systems
   }
 
   res.setHeader("X-Request-ID", req.id);
@@ -183,7 +154,26 @@ app.get("/api/v1/health", (req, res) => {
     requestId: req.id,
   });
 });
+app.get(
+    "/api/v1/livez",
+    (req, res) => {
 
+        res.status(200).json({
+            success: true,
+            status: "alive",
+            requestId: req.id
+        });
+    }
+);
+//================================================================================================
+/// routes for all the development 
+//=======================================================================================================
+
+
+app.use(
+    "/api/v1/auth",
+    AuthRoutes
+);
 
 app.use(
     "/api/v1/academic",

@@ -49,7 +49,36 @@ const AttendanceRecordSchema = new mongoose.Schema(
                 type: Boolean,
                 default: false
             }
-        }
+        },
+
+        gps: {
+    latitude: {
+        type: Number,
+        min: -90,
+        max: 90
+    },
+
+    longitude: {
+        type: Number,
+        min: -180,
+        max: 180
+    },
+
+    accuracyMeters: {
+        type: Number,
+        min: 0,
+        max: 10000
+    },
+
+    capturedAt: {
+        type: Date
+    },
+
+    distanceFromClassroomMeters: {
+        type: Number,
+        min: 0
+    }
+},
     },
     {
         timestamps: true
