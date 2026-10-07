@@ -21,6 +21,11 @@ const CHALLENGE_TTL_MS =
             .BIOMETRIC_CHALLENGE_TTL_MS
     ) || 30000;
 
+const ASSERTION_TTL_MS =
+    Number(
+        process.env.BIOMETRIC_ASSERTION_TTL_MS
+    ) || 30000;
+
 
 const challengeKey =
     (challengeId) =>
@@ -198,6 +203,45 @@ exports.verify =
         mimeType
     }) => {
 
+        const assertionId =
+    crypto.randomUUID();
+
+const assertionKey =
+    `biometric:assertion:${assertionId}`;
+
+await redisClient.set(
+    assertionKey,
+
+    JSON.stringify({
+        userId:
+            String(userId),
+
+        sessionId:
+            String(sessionId),
+
+        verificationId:
+            result.verificationId,
+
+        providerUserId:
+            result.providerUserId,
+
+        livenessPassed:
+            result.livenessPassed,
+
+        faceMatchPassed:
+            result.faceMatchPassed,
+
+        similarity:
+            result.similarity
+    }),
+
+    {
+        NX: true,
+        PX:
+            ASSERTION_TTL_MS
+    }
+);
+
         const key =
             challengeKey(
                 challengeId
@@ -339,5 +383,167 @@ exports.verify =
         );
 
 
-        return result;
+        return {
+    verified: true,
+
+    livenessPassed:
+        result.livenessPassed,
+
+    faceMatchPassed:
+        result.faceMatchPassed,
+
+    similarity:
+        result.similarity,
+
+    verificationId:
+        result.verificationId,
+
+    assertionId
+};;
+};
+
+
+
+exports.consumeAssertion =
+    async ({
+        assertionId,
+        userId,
+        sessionId
+    }) => {
+
+        if (!assertionId) {
+
+            throw new AppError(
+                "Biometric assertion is required",
+                401
+            );
+        }
+
+
+        const key =
+            `biometric:assertion:${assertionId}`;
+
+
+        const raw =
+            await redisClient.get(
+                key
+            );
+
+
+        if (!raw) {
+
+            throw new AppError(
+                "Biometric assertion expired or already used",
+                401
+            );
+        }
+
+
+        let assertion;
+
+        try {
+
+            assertion =
+                JSON.parse(raw);
+
+        } catch {
+
+            throw new AppError(
+                "Invalid biometric assertion",
+                500
+            );
+        }
+
+
+        if (
+            String(
+                assertion.userId
+            ) !==
+            String(userId)
+        ) {
+
+            throw new AppError(
+                "Biometric assertion does not belong to this student",
+                403
+            );
+        }
+
+
+        if (
+            String(
+                assertion.sessionId
+            ) !==
+            String(sessionId)
+        ) {
+
+            throw new AppError(
+                "Biometric assertion does not belong to this session",
+                403
+            );
+        }
+
+
+        if (
+            assertion.livenessPassed !== true ||
+            assertion.faceMatchPassed !== true
+        ) {
+
+            throw new AppError(
+                "Biometric verification is incomplete",
+                401
+            );
+        }
+
+
+        /*
+        --------------------------------------------------
+        ATOMIC CONSUME
+        --------------------------------------------------
+        */
+
+        const deleteScript = `
+            local value =
+                redis.call(
+                    "GET",
+                    KEYS[1]
+                )
+
+            if value == ARGV[1] then
+                return redis.call(
+                    "DEL",
+                    KEYS[1]
+                )
+            end
+
+            return 0
+        `;
+
+
+        const deleted =
+            await redisClient.eval(
+                deleteScript,
+                {
+                    keys: [
+                        key
+                    ],
+
+                    arguments: [
+                        raw
+                    ]
+                }
+            );
+
+
+        if (
+            Number(deleted) !== 1
+        ) {
+
+            throw new AppError(
+                "Biometric assertion was already used",
+                409
+            );
+        }
+
+
+        return assertion;
     };

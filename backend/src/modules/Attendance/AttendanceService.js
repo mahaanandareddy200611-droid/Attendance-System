@@ -29,6 +29,15 @@ const {
 } = require("./AttendanceRecordService");
 
 const {
+    consumeAssertion:
+        consumeBiometricAssertion
+} = require("../Biometric/BiometricService");
+
+const {
+    distanceMeters
+} = require("../../utils/geo");
+
+const {
     getCurrentChallenge,
     verifyChallenge,
     claimQrUse,
@@ -55,6 +64,33 @@ const {
     verifyAttendanceToken,
     isSlotFresh
 } = require("../../utils/attendanceToken");
+
+const {
+    emitAttendanceMarked,
+    emitSessionEnded
+} = require(
+    "../../socket/socket"
+);
+
+
+
+const classroom =
+    session.classroomSnapshot;
+
+const distance =
+    distanceMeters({
+        latitude1:
+            studentLatitude,
+
+        longitude1:
+            studentLongitude,
+
+        latitude2:
+            classroom.latitude,
+
+        longitude2:
+            classroom.longitude
+    });
 
 
 /*
@@ -576,6 +612,14 @@ exports.endSession = async ({
             session._id
     });
 
+    emitSessionEnded({
+    sessionId:
+        session.sessionId,
+
+    endedAt:
+        session.endedAt
+});
+
     return session;
 };
 
@@ -591,9 +635,8 @@ exports.verifyAttendance = async ({
     token,
     deviceId,
     deviceSignature,
+    biometricAssertionId,
     idempotencyKey,
-    biometricChallengeId,
-    biometricAssertion,
     ipAddress,
     userAgent
 }) => {
@@ -724,6 +767,56 @@ exports.verifyAttendance = async ({
             400
         );
     }
+
+
+    const studentLatitude =
+    Number(latitude);
+
+const studentLongitude =
+    Number(longitude);
+
+const studentAccuracy =
+    Number(accuracyMeters);
+
+const gpsCapturedAt =
+    new Date(capturedAt);
+
+if (
+    !Number.isFinite(studentLatitude) ||
+    !Number.isFinite(studentLongitude) ||
+    !Number.isFinite(studentAccuracy) ||
+    Number.isNaN(
+        gpsCapturedAt.getTime()
+    )
+) {
+    throw new AppError(
+        "Valid GPS data is required",
+        400
+    );
+}   
+        const allowedDistance =
+    classroom.geofenceRadiusMeters +
+    studentAccuracy;
+
+if (
+    distance >
+    allowedDistance
+) {
+
+    await AttendanceAttempt.create({
+        sessionId: session._id,
+        studentId,
+        result:
+            "GPS_OUTSIDE_GEOFENCE",
+        ipAddress,
+        userAgent
+    });
+
+    throw new AppError(
+        "Student location is outside the attendance area",
+        403
+    );
+}
 
 
     /*
@@ -899,6 +992,24 @@ exports.verifyAttendance = async ({
     } = idempotencyResult;
 
 
+
+    /*
+--------------------------------------------------
+BIOMETRIC ASSERTION
+--------------------------------------------------
+*/
+
+const biometricAssertion =
+    await consumeBiometricAssertion({
+        assertionId:
+            biometricAssertionId,
+
+        userId:
+            studentId,
+
+        sessionId:
+            session.sessionId
+    });
     /*
     --------------------------------------------------
     8. DEVICE CRYPTOGRAPHIC VERIFICATION
@@ -1154,34 +1265,44 @@ const biometricResult =
                 */
 
                 const attendanceResult =
-                    await createOrGetAttendanceRecord({
-                        sessionId:
-                            session._id,
+    await createOrGetAttendanceRecord({
+        sessionId:
+            session._id,
 
-                        studentId,
+        studentId,
 
-                        courseCode:
-                            session.courseCode,
+        courseCode:
+            session.courseCode,
 
-                        section:
-                            session.section,
+        section:
+            session.section,
 
-                        verification: {
-                            qr:
-                                true,
+        verification: {
+            qr: true,
+            device: true,
+            proximity: false,
+            biometric: true
+        },
 
-                            device:
-                                true,
+        gps: {
+            latitude:
+                studentLatitude,
 
-                            proximity:
-                                false,
+            longitude:
+                studentLongitude,
 
-                            biometric:
-                                true
-                        },
+            accuracyMeters:
+                studentAccuracy,
 
-                        dbSession
-                    });
+            capturedAt:
+                gpsCapturedAt,
+
+            distanceFromClassroomMeters:
+                distance
+        },
+
+        dbSession
+    });
 
 
                 attendanceRecord =
@@ -1452,6 +1573,25 @@ const biometricResult =
         ownerToken:
             qrUse.ownerToken
     });
+
+    emitAttendanceMarked({
+    sessionId:
+        session.sessionId,
+
+    attendanceId:
+        String(
+            attendanceRecord._id
+        ),
+
+    rollNumber:
+        rosterEntry.rollNumber,
+
+    markedAt:
+        attendanceRecord.markedAt,
+
+    alreadyMarked:
+        false
+});
 
 
     return response;

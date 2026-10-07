@@ -29,7 +29,9 @@ const AttendanceAttemptSchema = new mongoose.Schema(
                 "SESSION_NOT_ACTIVE",
                 "NOT_ELIGIBLE",
                 "ALREADY_MARKED",
-                "INVALID_REQUEST"
+                "INVALID_REQUEST",
+                "GPS_UNRELIABLE",
+                "GPS_OUTSIDE_GEOFENCE",
             ],
         required: true
         },

@@ -133,30 +133,30 @@ exports.verify =
 
 
             return res.status(200).json({
-                success: true,
+    success: true,
 
-                data: {
-                    verified:
-                        result.verified,
+    data: {
+        verified:
+            result.verified,
 
-                    livenessPassed:
-                        result.livenessPassed,
+        livenessPassed:
+            result.livenessPassed,
 
-                    livenessScore:
-                        result.livenessScore,
+        faceMatchPassed:
+            result.faceMatchPassed,
 
-                    faceMatchPassed:
-                        result.faceMatchPassed,
+        similarity:
+            result.similarity,
 
-                    similarity:
-                        result.similarity,
+        verificationId:
+            result.verificationId,
 
-                    verificationId:
-                        result.verificationId
-                },
+        assertionId:
+            result.assertionId
+    },
 
-                requestId:
-                    req.id
-            });
+    requestId:
+        req.id
+});
         }
     );
