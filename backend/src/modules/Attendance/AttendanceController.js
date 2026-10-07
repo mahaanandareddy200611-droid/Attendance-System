@@ -106,28 +106,34 @@ exports.verifyAttendance =
     asyncHandler(async (req, res) => {
 
         const {
-            token
-        } = req.body;
+            token,
+            deviceId,
+            deviceSignature
+            } = req.body;
 
         const idempotencyKey =
             req.get("Idempotency-Key");
 
-        const result =
-            await attendanceService
-                .verifyAttendance({
-                    studentId:
-                        req.user.id,
+    const result =
+        await attendanceService.verifyAttendance({
 
-                    token,
+        studentId:
+            req.user.id,
 
-                    idempotencyKey,
+        token,
 
-                    ipAddress:
-                        req.ip,
+        deviceId,
 
-                    userAgent:
-                        req.get("User-Agent")
-                });
+        deviceSignature,
+
+        idempotencyKey,
+
+        ipAddress:
+            req.ip,
+
+        userAgent:
+            req.get("User-Agent")
+    });
 
         if (result.replayed) {
 

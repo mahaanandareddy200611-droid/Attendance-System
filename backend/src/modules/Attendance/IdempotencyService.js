@@ -13,13 +13,20 @@ const LEASE_MS =
 
 const createFingerprint = ({
     studentId,
-    token
+    sessionId,
+    token,
+    deviceId
 }) => {
 
     return crypto
         .createHash("sha256")
         .update(
-            `${String(studentId)}:${token}`
+            [
+                String(studentId),
+                String(sessionId),
+                token,
+                deviceId
+            ].join(":")
         )
         .digest("hex");
 };
@@ -29,7 +36,8 @@ exports.claimIdempotency = async ({
     key,
     studentId,
     sessionId,
-    token
+    token,
+    deviceId
 }) => {
 
     const fingerprint =
