@@ -577,50 +577,121 @@ exports.endSession = async ({
     lecturerId
 }) => {
 
-    const session =
-        await AttendanceSession.findOne({
-            sessionId,
-            lecturerId
+    const dbSession =
+        await mongoose.startSession();
+
+    try {
+
+        let endedSession;
+
+        await dbSession.withTransaction(
+            async () => {
+
+                const session =
+                    await AttendanceSession
+                        .findOneAndUpdate(
+                            {
+                                sessionId,
+                                lecturerId,
+                                status: "ACTIVE"
+                            },
+                            {
+                                $set: {
+                                    status:
+                                        "ENDED",
+
+                                    endedAt:
+                                        new Date()
+                                },
+
+                                $inc: {
+                                    version: 1
+                                }
+                            },
+                            {
+                                new: true,
+                                session:
+                                    dbSession
+                            }
+                        );
+
+                if (!session) {
+
+                    const existing =
+                        await AttendanceSession
+                            .findOne({
+                                sessionId,
+                                lecturerId
+                            })
+                            .session(dbSession);
+
+                    if (!existing) {
+
+                        throw new AppError(
+                            "Attendance session not found",
+                            404
+                        );
+                    }
+
+                    if (
+                        existing.status ===
+                        "ENDED"
+                    ) {
+                        endedSession =
+                            existing;
+
+                        return;
+                    }
+
+                    throw new AppError(
+                        "Attendance session cannot be ended",
+                        409
+                    );
+                }
+
+                endedSession =
+                    session;
+
+                await AuditEvent.create(
+                    [
+                        {
+                            event:
+                                "ATTENDANCE_SESSION_ENDED",
+
+                            userId:
+                                lecturerId,
+
+                            sessionId:
+                                session._id,
+
+                            metadata: {
+                                publicSessionId:
+                                    session.sessionId
+                            }
+                        }
+                    ],
+                    {
+                        session:
+                            dbSession
+                    }
+                );
+            }
+        );
+
+        emitSessionEnded({
+            sessionId:
+                endedSession.sessionId,
+
+            endedAt:
+                endedSession.endedAt
         });
 
-    if (!session) {
-        throw new AppError(
-            "Attendance session not found",
-            404
-        );
+        return endedSession;
+
+    } finally {
+
+        await dbSession.endSession();
     }
-
-    if (
-        session.status === "ENDED"
-    ) {
-        return session;
-    }
-
-    session.status =
-        "ENDED";
-
-    await session.save();
-
-    await AuditEvent.create({
-        event:
-            "ATTENDANCE_SESSION_ENDED",
-
-        userId:
-            lecturerId,
-
-        sessionId:
-            session._id
-    });
-
-    emitSessionEnded({
-    sessionId:
-        session.sessionId,
-
-    endedAt:
-        session.endedAt
-});
-
-    return session;
 };
 
 

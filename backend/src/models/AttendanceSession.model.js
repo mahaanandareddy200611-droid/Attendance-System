@@ -22,7 +22,6 @@ const AttendanceSessionSchema =
                 type: mongoose.Schema.Types.ObjectId,
                 ref: "ClassSection",
                 required: true,
-                index: true,
                 immutable: true
             },
 
