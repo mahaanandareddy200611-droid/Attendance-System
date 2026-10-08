@@ -2,6 +2,12 @@ const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
 const crypto = require("crypto");
+const mongoose =
+    require("mongoose");
+
+const {
+    redisClient
+} = require("./config/redis");
 const academicRoutes =
     require("./modules/academic/AcademicRoutes");
 
@@ -163,6 +169,46 @@ app.get(
             status: "alive",
             requestId: req.id
         });
+    }
+);
+
+app.get(
+    "/api/v1/readyz",
+    (req, res) => {
+
+        const mongoReady =
+            mongoose.connection.readyState === 1;
+
+        const redisReady =
+            redisClient.isReady;
+
+        const ready =
+            mongoReady &&
+            redisReady;
+
+        return res
+            .status(
+                ready
+                    ? 200
+                    : 503
+            )
+            .json({
+                success: ready,
+                status: ready
+                    ? "ready"
+                    : "not_ready",
+
+                dependencies: {
+                    mongodb:
+                        mongoReady,
+
+                    redis:
+                        redisReady
+                },
+
+                requestId:
+                    req.id
+            });
     }
 );
 //================================================================================================
