@@ -17,6 +17,8 @@ const DeviceRoutes =
 
 const BiometricRoutes =
     require("./modules/Biometric/BiometricRoutes");
+const AttendanceRoutes =
+    require("./modules/Attendance/AttendanceRouter");
 
 const AuthRoutes =
     require("./modules/Auth/AuthRouter");
@@ -53,7 +55,7 @@ app.use(
         return callback(null, true);
       }
 
-      const allowedOrigins = (process.env.CORS_ORIGINS)
+      const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173")
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean);
@@ -238,6 +240,11 @@ app.use(
     BiometricRoutes
 );
 
+app.use(
+    "/api/v1/attendance",
+    AttendanceRoutes
+);
+
 /*
 |--------------------------------------------------------------------------
 | 404 handler
@@ -284,11 +291,13 @@ app.use((err, req, res, next) => {
     error: err,
   });
 
-  return res.status(500).json({
+  const statusCode = Number(err.statusCode) || 500;
+
+  return res.status(statusCode).json({
     success: false,
     error: {
-      code: "INTERNAL_SERVER_ERROR",
-      message: "An unexpected error occurred",
+      code: err.providerCode || (statusCode === 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
+      message: statusCode === 500 ? "An unexpected error occurred" : err.message,
     },
     requestId: req.id,
   });
