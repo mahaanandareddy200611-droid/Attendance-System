@@ -74,25 +74,6 @@ const {
 
 
 
-const classroom =
-    session.classroomSnapshot;
-
-const distance =
-    distanceMeters({
-        latitude1:
-            studentLatitude,
-
-        longitude1:
-            studentLongitude,
-
-        latitude2:
-            classroom.latitude,
-
-        longitude2:
-            classroom.longitude
-    });
-
-
 /*
 ==================================================
 CREATE ATTENDANCE SESSION
@@ -707,6 +688,10 @@ exports.verifyAttendance = async ({
     deviceId,
     deviceSignature,
     biometricAssertionId,
+    latitude,
+    longitude,
+    accuracyMeters,
+    capturedAt,
     idempotencyKey,
     ipAddress,
     userAgent
@@ -840,54 +825,39 @@ exports.verifyAttendance = async ({
     }
 
 
-    const studentLatitude =
-    Number(latitude);
+    const studentLatitude = Number(latitude);
+    const studentLongitude = Number(longitude);
+    const studentAccuracy = Number(accuracyMeters);
+    const gpsCapturedAt = new Date(capturedAt);
 
-const studentLongitude =
-    Number(longitude);
+    if (
+        !Number.isFinite(studentLatitude) ||
+        !Number.isFinite(studentLongitude) ||
+        !Number.isFinite(studentAccuracy) ||
+        Number.isNaN(gpsCapturedAt.getTime())
+    ) {
+        throw new AppError("Valid GPS data is required", 400);
+    }
 
-const studentAccuracy =
-    Number(accuracyMeters);
-
-const gpsCapturedAt =
-    new Date(capturedAt);
-
-if (
-    !Number.isFinite(studentLatitude) ||
-    !Number.isFinite(studentLongitude) ||
-    !Number.isFinite(studentAccuracy) ||
-    Number.isNaN(
-        gpsCapturedAt.getTime()
-    )
-) {
-    throw new AppError(
-        "Valid GPS data is required",
-        400
-    );
-}   
-        const allowedDistance =
-    classroom.geofenceRadiusMeters +
-    studentAccuracy;
-
-if (
-    distance >
-    allowedDistance
-) {
-
-    await AttendanceAttempt.create({
-        sessionId: session._id,
-        studentId,
-        result:
-            "GPS_OUTSIDE_GEOFENCE",
-        ipAddress,
-        userAgent
+    const classroom = session.classroomSnapshot;
+    const distance = distanceMeters({
+        latitude1: studentLatitude,
+        longitude1: studentLongitude,
+        latitude2: classroom.latitude,
+        longitude2: classroom.longitude
     });
 
-    throw new AppError(
-        "Student location is outside the attendance area",
-        403
-    );
-}
+    const allowedDistance = classroom.geofenceRadiusMeters + studentAccuracy;
+    if (distance > allowedDistance) {
+        await AttendanceAttempt.create({
+            sessionId: session._id,
+            studentId,
+            result: "GPS_OUTSIDE_GEOFENCE",
+            ipAddress,
+            userAgent
+        });
+        throw new AppError("Student location is outside the attendance area", 403);
+    }
 
 
     /*

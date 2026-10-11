@@ -1,12 +1,13 @@
 const AttendanceRecord =
-    require("./AttendanceRecord.model");
+    require("../../models/AttendanceRecord.model");
 
 const createOrGetAttendanceRecord = async ({
     sessionId,
     studentId,
     courseCode,
     section,
-    verification
+    verification,
+    gps
 }) => {
 
     try {
@@ -24,7 +25,8 @@ const createOrGetAttendanceRecord = async ({
                         courseCode,
                         section,
                         markedAt: new Date(),
-                        verification
+                        verification,
+                        gps
                     }
                 },
                 {

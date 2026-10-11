@@ -203,45 +203,6 @@ exports.verify =
         mimeType
     }) => {
 
-        const assertionId =
-    crypto.randomUUID();
-
-const assertionKey =
-    `biometric:assertion:${assertionId}`;
-
-await redisClient.set(
-    assertionKey,
-
-    JSON.stringify({
-        userId:
-            String(userId),
-
-        sessionId:
-            String(sessionId),
-
-        verificationId:
-            result.verificationId,
-
-        providerUserId:
-            result.providerUserId,
-
-        livenessPassed:
-            result.livenessPassed,
-
-        faceMatchPassed:
-            result.faceMatchPassed,
-
-        similarity:
-            result.similarity
-    }),
-
-    {
-        NX: true,
-        PX:
-            ASSERTION_TTL_MS
-    }
-);
-
         const key =
             challengeKey(
                 challengeId
@@ -366,6 +327,23 @@ await redisClient.set(
             );
         }
 
+        const assertionId = crypto.randomUUID();
+        const assertionKey = `biometric:assertion:${assertionId}`;
+
+        await redisClient.set(
+            assertionKey,
+            JSON.stringify({
+                userId: String(userId),
+                sessionId: String(sessionId),
+                verificationId: result.verificationId,
+                providerUserId: result.providerUserId,
+                livenessPassed: result.livenessPassed,
+                faceMatchPassed: result.faceMatchPassed,
+                similarity: result.similarity
+            }),
+            { NX: true, PX: ASSERTION_TTL_MS }
+        );
+
 
         await BiometricEnrollment.updateOne(
             {
@@ -384,22 +362,13 @@ await redisClient.set(
 
 
         return {
-    verified: true,
-
-    livenessPassed:
-        result.livenessPassed,
-
-    faceMatchPassed:
-        result.faceMatchPassed,
-
-    similarity:
-        result.similarity,
-
-    verificationId:
-        result.verificationId,
-
-    assertionId
-};;
+            verified: true,
+            livenessPassed: result.livenessPassed,
+            faceMatchPassed: result.faceMatchPassed,
+            similarity: result.similarity,
+            verificationId: result.verificationId,
+            assertionId
+        };
 };
 
 

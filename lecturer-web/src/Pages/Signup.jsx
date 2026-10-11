@@ -10,13 +10,13 @@ function Signup() {
   const [mobileNumber, setMobileNumber] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [role, setRole] = useState("Student");
 
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
 
-    // Check password
     if (password !== confirmPassword) {
       alert("Passwords do not match");
       return;
@@ -28,19 +28,17 @@ function Signup() {
         RollNumber: rollNumber,
         email: email,
         password: password,
-        role: "student",
+        role: role,
         faceImage_url: "",
         mobileNumber: mobileNumber
       };
 
-      // Send data to backend
       const response = await signupuser(data);
 
       console.log("Signup successful:", response);
 
-      alert(response.message);
+      alert(response.data.message);
 
-      // Navigate to login after successful signup
       navigate("/login");
 
     } catch (error) {
@@ -56,13 +54,18 @@ function Signup() {
   return (
     <div className="auth-page">
       <div className="auth-card">
+
         <h1>Create Account</h1>
-        <p className="subtitle">Sign up to get started</p>
+
+        <p className="subtitle">
+          Sign up to get started
+        </p>
 
         <form onSubmit={handleSubmit}>
 
           <div className="input-group">
             <label>Name</label>
+
             <input
               type="text"
               placeholder="Enter your name"
@@ -74,6 +77,7 @@ function Signup() {
 
           <div className="input-group">
             <label>Roll Number</label>
+
             <input
               type="text"
               placeholder="Enter your roll number"
@@ -85,6 +89,7 @@ function Signup() {
 
           <div className="input-group">
             <label>Email</label>
+
             <input
               type="email"
               placeholder="Enter your email"
@@ -96,6 +101,7 @@ function Signup() {
 
           <div className="input-group">
             <label>Mobile Number</label>
+
             <input
               type="tel"
               placeholder="Enter your mobile number"
@@ -105,8 +111,23 @@ function Signup() {
             />
           </div>
 
+          {/* ROLE */}
+          <div className="input-group">
+            <label>Register As</label>
+
+            <select
+              value={role}
+              onChange={(e) => setRole(e.target.value)}
+              required
+            >
+              <option value="Student">Student</option>
+              <option value="Lecturer">Lecturer</option>
+            </select>
+          </div>
+
           <div className="input-group">
             <label>Password</label>
+
             <input
               type="password"
               placeholder="Create a password"
@@ -118,6 +139,7 @@ function Signup() {
 
           <div className="input-group">
             <label>Confirm Password</label>
+
             <input
               type="password"
               placeholder="Confirm your password"
@@ -135,8 +157,11 @@ function Signup() {
 
         <p className="bottom-text">
           Already have an account?{" "}
-          <Link to="/login">Login</Link>
+          <Link to="/login">
+            Login
+          </Link>
         </p>
+
       </div>
     </div>
   );

@@ -1,7 +1,7 @@
 const crypto = require("crypto");
 
 const Idempotency =
-    require("./Idempotency.model");
+    require("../../models/Idempotency.model");
 
 const AppError =
     require("../../utils/AppError");
@@ -43,7 +43,9 @@ exports.claimIdempotency = async ({
     const fingerprint =
         createFingerprint({
             studentId,
-            token
+            sessionId,
+            token,
+            deviceId
         });
 
     const ownerToken =

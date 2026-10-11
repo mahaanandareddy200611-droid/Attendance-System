@@ -137,18 +137,11 @@ exports.enrollStudent = async ({
     }
 
     try {
-        return Enrollment.find({
-    sectionId,
-    status: "ACTIVE"
-})
-    .populate({
-        path: "studentId",
-        select: "Name email RollNumber"
-    })
-    .sort({
-        rollNumber: 1
-    })
-    .lean();
+        return await Enrollment.create({
+            studentId,
+            sectionId,
+            rollNumber
+        });
     } catch (error) {
         if (error.code === 11000) {
 
@@ -199,7 +192,7 @@ exports.getSectionStudents = async ({
     })
         .populate({
             path: "studentId",
-            select: "name email studentNumber"
+            select: "Name email RollNumber"
         })
         .sort({
             rollNumber: 1

@@ -29,8 +29,21 @@ function Login() {
         JSON.stringify(response.data.data)
       );
 
-      // Navigate to dashboard after successful login
-      navigate("/dashboard");
+      // Get user's role
+      const role = response.data.data.role;
+
+      console.log("User role:", role);
+
+      // Navigate based on role
+      if (role === "Lecturer") {
+        navigate("/dashboard");
+      } else if (role === "Admin") {
+        navigate("/admin/academic");
+      } else if (role === "Student") {
+        navigate("/student/academic");
+      } else {
+        alert("Unknown user role");
+      }
 
     } catch (error) {
       console.error("Login failed:", error);
@@ -45,6 +58,7 @@ function Login() {
   return (
     <div className="auth-page">
       <div className="auth-card">
+
         <h1>Welcome Back</h1>
 
         <p className="subtitle">
@@ -95,6 +109,7 @@ function Login() {
             Sign Up
           </Link>
         </p>
+
       </div>
     </div>
   );
