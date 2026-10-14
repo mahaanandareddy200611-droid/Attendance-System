@@ -2,35 +2,6 @@ const AppError =
     require("../../utils/AppError");
 
 
-const BASE_URL =
-    process.env.BIOMETRIC_BASE_URL;
-
-const API_KEY =
-    process.env.BIOMETRIC_API_KEY;
-
-const COLLECTION_ID =
-    process.env.BIOMETRIC_COLLECTION_ID ||
-    "students";
-
-const TIMEOUT_MS =
-    Number(
-        process.env.BIOMETRIC_TIMEOUT_MS
-    ) || 5000;
-
-
-if (!BASE_URL) {
-    throw new Error(
-        "BIOMETRIC_BASE_URL is not configured"
-    );
-}
-
-if (!API_KEY) {
-    throw new Error(
-        "BIOMETRIC_API_KEY is not configured"
-    );
-}
-
-
 const request =
     async ({
         path,
@@ -39,26 +10,33 @@ const request =
         headers = {}
     }) => {
 
+        const baseUrl = process.env.BIOMETRIC_BASE_URL;
+        const apiKey = process.env.BIOMETRIC_API_KEY;
+        const timeoutMs = Number(process.env.BIOMETRIC_TIMEOUT_MS) || 5000;
+        if (!baseUrl || !apiKey) {
+            throw new AppError("Biometric provider is not configured", 503);
+        }
+
         const controller =
             new AbortController();
 
         const timeout =
             setTimeout(
                 () => controller.abort(),
-                TIMEOUT_MS
+                timeoutMs
             );
 
         try {
 
             const response =
                 await fetch(
-                    `${BASE_URL}${path}`,
+                    `${baseUrl}${path}`,
                     {
                         method,
 
                         headers: {
                             Authorization:
-                                `Bearer ${API_KEY}`,
+                                `Bearer ${apiKey}`,
 
                             ...headers
                         },
@@ -206,7 +184,7 @@ exports.enroll =
             await request({
                 path:
                     `/v1/collections/` +
-                    `${COLLECTION_ID}/persons`,
+                    `${process.env.BIOMETRIC_COLLECTION_ID || "students"}/persons`,
 
                 method:
                     "POST",
@@ -311,7 +289,7 @@ exports.verify =
             await request({
                 path:
                     `/v1/collections/` +
-                    `${COLLECTION_ID}/search`,
+                    `${process.env.BIOMETRIC_COLLECTION_ID || "students"}/search`,
 
                 method:
                     "POST",

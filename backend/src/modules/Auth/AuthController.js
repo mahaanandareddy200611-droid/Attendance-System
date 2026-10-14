@@ -104,3 +104,19 @@ exports.Me = asyncHandler(async (req, res) => {
     },
   });
 });
+
+exports.CreateLecturer = asyncHandler(async (req, res) => {
+  const lecturer = await authservice.CreateLecturer(req.body);
+  return res.status(201).json({
+    success: true,
+    message: "Lecturer account created successfully",
+    data: {
+      id: lecturer._id,
+      name: lecturer.Name,
+      email: lecturer.email,
+      mobileNumber: lecturer.mobileNumber,
+      role: lecturer.role,
+      status: lecturer.status,
+    },
+  });
+});

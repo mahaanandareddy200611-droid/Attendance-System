@@ -1,12 +1,49 @@
 import api from "../api/api";
 
+export const getMyBiometricEnrollment = () => api.get("/biometric/me");
+
+async function prepareBiometricImage(image) {
+  if (
+    !image ||
+    !["image/jpeg", "image/png", "image/webp"].includes(image.type)
+  ) {
+    throw new Error("Choose a JPEG, PNG, or WebP photo.");
+  }
+  if (image.size <= 900 * 1024) return image;
+  if (!window.createImageBitmap) {
+    throw new Error("Choose a photo smaller than 900 KB for upload.");
+  }
+
+  const bitmap = await createImageBitmap(image);
+  const scale = Math.min(1, 1280 / Math.max(bitmap.width, bitmap.height));
+  const canvas = document.createElement("canvas");
+  canvas.width = Math.round(bitmap.width * scale);
+  canvas.height = Math.round(bitmap.height * scale);
+  canvas.getContext("2d").drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+  bitmap.close();
+
+  for (const quality of [0.82, 0.7, 0.58, 0.46]) {
+    const blob = await new Promise((resolve) =>
+      canvas.toBlob(resolve, "image/jpeg", quality),
+    );
+    if (blob && blob.size <= 900 * 1024) {
+      return new File([blob], "attendance-photo.jpg", { type: "image/jpeg" });
+    }
+  }
+  throw new Error(
+    "This photo is still too large. Choose a smaller or lower-resolution photo.",
+  );
+}
+
 export async function enrollBiometric(image) {
+  const photo = await prepareBiometricImage(image);
   const form = new FormData();
-  form.append("image", image, image.name || "enrollment.jpg");
+  form.append("image", photo, photo.name || "enrollment.jpg");
   return api.post("/biometric/enroll", form);
 }
 
 export async function verifyBiometricForSession({ sessionId, image }) {
+  const photo = await prepareBiometricImage(image);
   const challengeResponse = await api.post("/biometric/challenge", {
     sessionId,
   });
@@ -14,7 +51,7 @@ export async function verifyBiometricForSession({ sessionId, image }) {
   const form = new FormData();
   form.append("sessionId", sessionId);
   form.append("challengeId", challengeId);
-  form.append("image", image, image.name || "verification.jpg");
+  form.append("image", photo, photo.name || "verification.jpg");
   const response = await api.post("/biometric/verify", form);
   return response.data.data.assertionId;
 }

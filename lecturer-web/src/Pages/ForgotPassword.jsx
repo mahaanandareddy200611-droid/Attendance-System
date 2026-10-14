@@ -2,236 +2,185 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import {
   ForgotPassword,
-  VerifyOtp,
   SetPassword,
+  VerifyOtp,
 } from "../services/auth.service";
-import "./../Styles/App.css";
+import { getApiErrorMessage } from "../api/errors";
+import "../Styles/App.css";
 
-function ForgotPasswordPage() {
+export default function ForgotPasswordPage() {
   const [step, setStep] = useState(1);
-
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
-
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-
+  const [message, setMessage] = useState("");
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
   const navigate = useNavigate();
 
-  // STEP 1: Send OTP
-  const handleSendOtp = async (e) => {
-    e.preventDefault();
-
+  const submit = async (event, action, successMessage, nextStep) => {
+    event.preventDefault();
+    setError("");
+    setMessage("");
+    setBusy(true);
     try {
-      const response = await ForgotPassword({
-        email: email,
-      });
-
-      console.log("OTP sent:", response.data);
-
-      alert(response.data.message);
-
-      setStep(2);
-    } catch (error) {
-      console.error("Send OTP error:", error);
-
-      alert(
-        error.response?.data?.message ||
-        "Failed to send OTP"
+      await action();
+      if (nextStep) setStep(nextStep);
+      if (successMessage) setMessage(successMessage);
+      if (nextStep === 0) navigate("/login", { replace: true });
+    } catch (requestError) {
+      setError(
+        getApiErrorMessage(
+          requestError,
+          "Password recovery could not be completed.",
+        ),
       );
+    } finally {
+      setBusy(false);
     }
   };
 
-  // STEP 2: Verify OTP
-  const handleVerifyOtp = async (e) => {
-    e.preventDefault();
-
-    try {
-      const response = await VerifyOtp({
-        email: email,
-        otp: otp,
-      });
-
-      console.log("OTP verified:", response.data);
-
-      alert(response.data.message);
-
-      setStep(3);
-    } catch (error) {
-      console.error("OTP verification error:", error);
-
-      alert(
-        error.response?.data?.message ||
-        "Invalid OTP"
-      );
-    }
-  };
-
-  // STEP 3: Reset Password
-  const handleResetPassword = async (e) => {
-    e.preventDefault();
-
+  const handleReset = (event) => {
+    event.preventDefault();
     if (password !== confirmPassword) {
-      alert("Passwords do not match");
+      setError("The passwords do not match.");
       return;
     }
-
-    try {
-      const response = await SetPassword({
-        email: email,
-        password: password,
-      });
-
-      console.log("Password reset:", response.data);
-
-      alert(response.data.message);
-
-      // Password successfully changed
-      // Navigate to Login page
-      navigate("/login");
-
-    } catch (error) {
-      console.error("Reset password error:", error);
-
-      alert(
-        error.response?.data?.message ||
-        "Failed to reset password"
-      );
-    }
+    submit(
+      event,
+      () => SetPassword({ email, password }),
+      "Your password has been reset.",
+      0,
+    );
   };
 
   return (
-    <div className="auth-page">
-      <div className="auth-card">
+    <main className="auth-page">
+      <section className="auth-card" aria-labelledby="recovery-title">
+        <Link className="auth-brand" to="/login">
+          <span className="auth-logo">A</span>Attendance
+        </Link>
+        <h1 id="recovery-title">
+          {step === 1
+            ? "Reset your password"
+            : step === 2
+              ? "Verify your email"
+              : "Choose a new password"}
+        </h1>
+        <p className="subtitle">
+          {step === 1 &&
+            "Enter your account email and we’ll send a one-time code."}
+          {step === 2 && `Enter the one-time code sent to ${email}.`}
+          {step === 3 && "Choose a password you have not used before."}
+        </p>
+        {error && (
+          <p className="form-message error" role="alert">
+            {error}
+          </p>
+        )}
+        {message && (
+          <p className="form-message success" role="status">
+            {message}
+          </p>
+        )}
 
-        {/* STEP 1 - EMAIL */}
         {step === 1 && (
-          <>
-            <h1>Forgot Password?</h1>
-
-            <p className="subtitle">
-              Enter your email to receive an OTP.
-            </p>
-
-            <form onSubmit={handleSendOtp}>
-
-              <div className="input-group">
-                <label>Email</label>
-
-                <input
-                  type="email"
-                  placeholder="Enter your email"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  required
-                />
-              </div>
-
-              <button type="submit">
-                Send OTP
-              </button>
-
-            </form>
-          </>
+          <form
+            onSubmit={(event) =>
+              submit(
+                event,
+                () => ForgotPassword({ email }),
+                "If this email belongs to an account, a code has been sent.",
+                2,
+              )
+            }
+          >
+            <div className="input-group">
+              <label htmlFor="recovery-email">Email</label>
+              <input
+                id="recovery-email"
+                type="email"
+                autoComplete="email"
+                value={email}
+                onChange={(event) => setEmail(event.target.value)}
+                required
+              />
+            </div>
+            <button type="submit" disabled={busy}>
+              {busy ? "Sending…" : "Send one-time code"}
+            </button>
+          </form>
         )}
 
-        {/* STEP 2 - OTP */}
         {step === 2 && (
-          <>
-            <h1>Verify OTP</h1>
-
-            <p className="subtitle">
-              Enter the OTP sent to your email.
-            </p>
-
-            <form onSubmit={handleVerifyOtp}>
-
-              <div className="input-group">
-                <label>Email</label>
-
-                <input
-                  type="email"
-                  value={email}
-                  disabled
-                />
-              </div>
-
-              <div className="input-group">
-                <label>OTP</label>
-
-                <input
-                  type="text"
-                  placeholder="Enter 6-digit OTP"
-                  value={otp}
-                  onChange={(e) => setOtp(e.target.value)}
-                  maxLength={6}
-                  required
-                />
-              </div>
-
-              <button type="submit">
-                Verify OTP
-              </button>
-
-            </form>
-          </>
+          <form
+            onSubmit={(event) =>
+              submit(
+                event,
+                () => VerifyOtp({ email, otp }),
+                "Email verified. Set a new password.",
+                3,
+              )
+            }
+          >
+            <div className="input-group">
+              <label htmlFor="recovery-otp">One-time code</label>
+              <input
+                id="recovery-otp"
+                inputMode="numeric"
+                autoComplete="one-time-code"
+                pattern="[0-9]{6}"
+                maxLength={6}
+                value={otp}
+                onChange={(event) =>
+                  setOtp(event.target.value.replace(/\D/g, ""))
+                }
+                required
+              />
+            </div>
+            <button type="submit" disabled={busy || otp.length !== 6}>
+              {busy ? "Checking…" : "Verify code"}
+            </button>
+          </form>
         )}
 
-        {/* STEP 3 - NEW PASSWORD */}
         {step === 3 && (
-          <>
-            <h1>Reset Password</h1>
-
-            <p className="subtitle">
-              Enter your new password.
-            </p>
-
-            <form onSubmit={handleResetPassword}>
-
-              <div className="input-group">
-                <label>New Password</label>
-
-                <input
-                  type="password"
-                  placeholder="Enter new password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  required
-                />
-              </div>
-
-              <div className="input-group">
-                <label>Confirm New Password</label>
-
-                <input
-                  type="password"
-                  placeholder="Confirm new password"
-                  value={confirmPassword}
-                  onChange={(e) =>
-                    setConfirmPassword(e.target.value)
-                  }
-                  required
-                />
-              </div>
-
-              <button type="submit">
-                Reset Password
-              </button>
-
-            </form>
-          </>
+          <form onSubmit={handleReset}>
+            <div className="input-group">
+              <label htmlFor="new-password">New password</label>
+              <input
+                id="new-password"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                value={password}
+                onChange={(event) => setPassword(event.target.value)}
+                required
+              />
+            </div>
+            <div className="input-group">
+              <label htmlFor="confirm-password">Confirm new password</label>
+              <input
+                id="confirm-password"
+                type="password"
+                autoComplete="new-password"
+                minLength={10}
+                value={confirmPassword}
+                onChange={(event) => setConfirmPassword(event.target.value)}
+                required
+              />
+            </div>
+            <button type="submit" disabled={busy}>
+              {busy ? "Resetting…" : "Reset password"}
+            </button>
+          </form>
         )}
 
         <p className="bottom-text">
-          Remember your password?{" "}
-          <Link to="/login">
-            Login
-          </Link>
+          Remembered your password? <Link to="/login">Back to login</Link>
         </p>
-
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }
-
-export default ForgotPasswordPage;

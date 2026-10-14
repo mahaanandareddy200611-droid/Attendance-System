@@ -22,9 +22,9 @@ function Login() {
     try {
       const user = await login({ email, password });
       const defaultPath = {
-        Admin: "/admin/academic",
-        Lecturer: "/dashboard",
-        Student: "/student/academic",
+        Admin: "/admin/dashboard",
+        Lecturer: "/lecturer/dashboard",
+        Student: "/student/dashboard",
       }[user.role];
 
       if (!defaultPath)
@@ -46,18 +46,31 @@ function Login() {
 
   return (
     <div className="auth-page">
-      <div className="auth-card">
-        <h1>Welcome Back</h1>
+      <section className="auth-card">
+        <Link className="auth-brand" to="/login">
+          <span className="auth-logo">A</span>Attendance
+        </Link>
+        <h1>Welcome back</h1>
 
         <p className="subtitle">Login to your account</p>
 
-        {errorMessage && <p role="alert">{errorMessage}</p>}
+        {location.state?.notice && (
+          <p className="form-message success" role="status">
+            {location.state.notice}
+          </p>
+        )}
+        {errorMessage && (
+          <p className="form-message error" role="alert">
+            {errorMessage}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit}>
           <div className="input-group">
-            <label>Email</label>
+            <label htmlFor="login-email">Email</label>
 
             <input
+              id="login-email"
               type="email"
               placeholder="Enter your email"
               value={email}
@@ -67,9 +80,10 @@ function Login() {
           </div>
 
           <div className="input-group">
-            <label>Password</label>
+            <label htmlFor="login-password">Password</label>
 
             <input
+              id="login-password"
               type="password"
               placeholder="Enter your password"
               value={password}
@@ -90,7 +104,7 @@ function Login() {
         <p className="bottom-text">
           Don't have an account? <Link to="/signup">Sign Up</Link>
         </p>
-      </div>
+      </section>
     </div>
   );
 }

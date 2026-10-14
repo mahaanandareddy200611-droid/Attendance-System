@@ -47,7 +47,7 @@ app.use(
 
       const allowedOrigins = (
         process.env.CORS_ORIGINS ||
-        "http://localhost:5173,http://127.0.0.1:5173"
+        "http://localhost:5173,http://127.0.0.1:5173,http://localhost:8081"
       )
         .split(",")
         .map((value) => value.trim())
@@ -245,7 +245,9 @@ app.use((err, req, res, next) => {
     error: err,
   });
 
-  const statusCode = Number(err.statusCode) || 500;
+  const statusCode =
+    Number(err.statusCode || err.status) ||
+    (err.type === "entity.too.large" || err.code === "LIMIT_FILE_SIZE" ? 413 : 500);
 
   return res.status(statusCode).json({
     success: false,

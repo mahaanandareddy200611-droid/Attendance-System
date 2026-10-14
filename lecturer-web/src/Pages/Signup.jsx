@@ -36,9 +36,13 @@ function Signup() {
         mobileNumber,
       };
 
-      const response = await signupuser(data);
-      alert(response.data.message);
-      navigate("/login");
+      await signupuser(data);
+      navigate("/login", {
+        replace: true,
+        state: {
+          notice: "Your student account is ready. Sign in to continue.",
+        },
+      });
     } catch (error) {
       setErrorMessage(
         getApiErrorMessage(
@@ -53,18 +57,26 @@ function Signup() {
 
   return (
     <div className="auth-page">
-      <div className="auth-card">
-        <h1>Create Account</h1>
+      <section className="auth-card">
+        <Link className="auth-brand" to="/login">
+          <span className="auth-logo">A</span>Attendance
+        </Link>
+        <h1>Create your account</h1>
 
         <p className="subtitle">Create a student account to get started</p>
 
-        {errorMessage && <p role="alert">{errorMessage}</p>}
+        {errorMessage && (
+          <p className="form-message error" role="alert">
+            {errorMessage}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit}>
           <div className="input-group">
-            <label>Name</label>
+            <label htmlFor="signup-name">Name</label>
 
             <input
+              id="signup-name"
               type="text"
               placeholder="Enter your name"
               value={name}
@@ -74,21 +86,24 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Roll Number</label>
+            <label htmlFor="signup-roll">Roll number</label>
 
             <input
+              id="signup-roll"
               type="text"
-              placeholder="Enter your roll number"
+              placeholder="24BCS101"
+              pattern="[0-9]{2}B[A-Z]{2}[0-9]{3}"
               value={rollNumber}
-              onChange={(e) => setRollNumber(e.target.value)}
+              onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
               required
             />
           </div>
 
           <div className="input-group">
-            <label>Email</label>
+            <label htmlFor="signup-email">Email</label>
 
             <input
+              id="signup-email"
               type="email"
               placeholder="Enter your email"
               value={email}
@@ -98,9 +113,10 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Mobile Number</label>
+            <label htmlFor="signup-mobile">Mobile number</label>
 
             <input
+              id="signup-mobile"
               type="tel"
               placeholder="Enter your mobile number"
               value={mobileNumber}
@@ -110,11 +126,13 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Password</label>
+            <label htmlFor="signup-password">Password</label>
 
             <input
+              id="signup-password"
               type="password"
               placeholder="Create a password"
+              minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -122,9 +140,10 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Confirm Password</label>
+            <label htmlFor="signup-confirm">Confirm password</label>
 
             <input
+              id="signup-confirm"
               type="password"
               placeholder="Confirm your password"
               value={confirmPassword}
@@ -141,7 +160,7 @@ function Signup() {
         <p className="bottom-text">
           Already have an account? <Link to="/login">Login</Link>
         </p>
-      </div>
+      </section>
     </div>
   );
 }

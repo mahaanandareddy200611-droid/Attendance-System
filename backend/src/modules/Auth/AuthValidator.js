@@ -23,6 +23,13 @@ exports.signup = joi.object({
   faceImage_url: joi.string().uri().allow(null, "").optional(),
 });
 
+exports.createLecturer = joi.object({
+  name: joi.string().trim().min(2).max(100).required(),
+  email: joi.string().lowercase().trim().email().required(),
+  password: joi.string().min(10).required(),
+  mobileNumber: joi.string().pattern(/^[0-9]{10}$/).required(),
+});
+
 exports.login = joi.object({
   email: joi.string().lowercase().trim().email().required(),
   password: joi.string().min(6).required(),

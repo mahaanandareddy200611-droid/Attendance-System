@@ -1,8 +1,8 @@
-function StudentDashboard(){
-    return(
-        <>
-        <h1>Student</h1>
-        </>
-    )
+function StudentDashboard() {
+  return (
+    <>
+      <h1>Student</h1>
+    </>
+  );
 }
-export  default StudentDashboard
+export default StudentDashboard;

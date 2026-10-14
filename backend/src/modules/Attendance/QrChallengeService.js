@@ -13,7 +13,7 @@ const {
 const QR_REFRESH_MS =
     Number(
         process.env.QR_REFRESH_MS
-    ) || 250;
+    ) || 3000;
 
 
 /*
@@ -23,7 +23,7 @@ const QR_REFRESH_MS =
 const QR_CHALLENGE_TTL_MS =
     Number(
         process.env.QR_CHALLENGE_TTL_MS
-    ) || 1500;
+    ) || 8000;
 
 
 /*
@@ -379,4 +379,4 @@ exports.releaseQrUse =
             }
         );
     };
-    
+

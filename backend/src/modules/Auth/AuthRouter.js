@@ -4,6 +4,7 @@ const AuthRoute = express.Router();
 
 const validate = require("../../utils/validate");
 const authenticate = require("../../middlewares/Auth");
+const authorize = require("../../middlewares/authorize");
 
 const {
   signup,
@@ -11,6 +12,7 @@ const {
   forgotPassword: forgotPasswordSchema,
   otp,
   newpassword,
+  createLecturer,
 } = require("./AuthValidator");
 
 const {
@@ -20,6 +22,7 @@ const {
   forgotPassword,
   verifyResetOtp,
   newPassword,
+  CreateLecturer,
 } = require("./AuthController");
 
 // Public authentication routes
@@ -28,6 +31,13 @@ AuthRoute.post("/login", validate(login), Login);
 
 // Protected route: requires a valid JWT
 AuthRoute.get("/me", authenticate, Me);
+AuthRoute.post(
+  "/lecturers",
+  authenticate,
+  authorize("Admin"),
+  validate(createLecturer),
+  CreateLecturer,
+);
 
 // Password recovery routes
 AuthRoute.post(

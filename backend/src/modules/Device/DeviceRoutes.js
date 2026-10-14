@@ -6,15 +6,22 @@ const Auth =
 
 const authorize =
     require("../../middlewares/authorize");
+const validate = require("../../utils/validate");
+const { registerDevice: registerDeviceSchema } = require("./DeviceValidator");
 
 const {
     registrationChallenge,
-    registerDevice
+    registerDevice,
+    getMyDevice,
+    revokeMyDevice
 } = require("./DeviceController");
 
 
 const router =
     express.Router();
+
+router.get("/me", Auth, authorize("Student"), getMyDevice);
+router.delete("/me", Auth, authorize("Student"), revokeMyDevice);
 
 
 router.post(
@@ -29,6 +36,7 @@ router.post(
     "/register",
     Auth,
     authorize("Student"),
+    validate(registerDeviceSchema),
     registerDevice
 );
 

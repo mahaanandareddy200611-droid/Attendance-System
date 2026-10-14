@@ -7,9 +7,21 @@ const Auth = require("../../middlewares/Auth");
 
 const authorize = require("../../middlewares/authorize");
 
-const {createSession,getQr,endSession,verifyAttendance} = require("./AttendanceController");
+const {
+    createSession,
+    getQr,
+    endSession,
+    verifyAttendance,
+    listSessions,
+    listAvailableStudentSessions,
+    listSessionRecords,
+    listMyRecords,
+    listAdminRecords
+} = require("./AttendanceController");
 
 const { createRateLimiter } = require("../../middlewares/rateLimiter");
+const validate = require("../../utils/validate");
+const { createSession: createSessionSchema, verifyAttendance: verifyAttendanceSchema } = require("./AttendanceValidator");
 
 const studentAttendanceRateLimit =
     createRateLimiter({
@@ -50,8 +62,30 @@ const ipAttendanceRateLimit =
 
 // LECTURER
 
+AttendanceRouter.get("/sessions", Auth, authorize("Lecturer", "Admin"), listSessions);
+AttendanceRouter.get(
+    "/sessions/available",
+    Auth,
+    authorize("Student"),
+    listAvailableStudentSessions
+);
+AttendanceRouter.get(
+    "/sessions/:sessionId/records",
+    Auth,
+    authorize("Lecturer", "Admin"),
+    listSessionRecords
+);
+AttendanceRouter.get("/records/me", Auth, authorize("Student"), listMyRecords);
+AttendanceRouter.get("/records", Auth, authorize("Admin", "Lecturer"), listAdminRecords);
+
 // Start attendance
-AttendanceRouter.post("/sessions",Auth,authorize("Lecturer"),createSession);
+AttendanceRouter.post(
+    "/sessions",
+    Auth,
+    authorize("Lecturer"),
+    validate(createSessionSchema),
+    createSession
+);
 
 
 // Get current QR
@@ -79,6 +113,7 @@ AttendanceRouter.post(
     "/verify",
     Auth,
     authorize("Student"),
+    validate(verifyAttendanceSchema),
     studentAttendanceRateLimit,
     ipAttendanceRateLimit,
     verifyAttendance

@@ -14,6 +14,14 @@ const {
 const provider =
     require("./LocalBiometricProvider");
 
+exports.getMyEnrollment = async ({ userId }) => {
+    const enrollment = await BiometricEnrollment.findOne({
+        userId,
+        status: "ACTIVE"
+    }).select("status provider modelVersion enrolledAt lastVerifiedAt").lean();
+    return enrollment || null;
+};
+
 
 const CHALLENGE_TTL_MS =
     Number(
@@ -516,3 +524,33 @@ exports.consumeAssertion =
 
         return assertion;
     };
+
+exports.validateAssertion = async ({ assertionId, userId, sessionId }) => {
+    if (!assertionId) {
+        throw new AppError("Biometric assertion is required", 401);
+    }
+
+    const raw = await redisClient.get(`biometric:assertion:${assertionId}`);
+    if (!raw) {
+        throw new AppError("Biometric assertion expired or already used", 401);
+    }
+
+    let assertion;
+    try {
+        assertion = JSON.parse(raw);
+    } catch {
+        throw new AppError("Invalid biometric assertion", 500);
+    }
+
+    if (String(assertion.userId) !== String(userId)) {
+        throw new AppError("Biometric assertion does not belong to this student", 403);
+    }
+    if (String(assertion.sessionId) !== String(sessionId)) {
+        throw new AppError("Biometric assertion does not belong to this session", 403);
+    }
+    if (assertion.livenessPassed !== true || assertion.faceMatchPassed !== true) {
+        throw new AppError("Biometric verification is incomplete", 401);
+    }
+
+    return assertion;
+};

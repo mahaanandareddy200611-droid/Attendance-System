@@ -56,14 +56,49 @@ exports.getSectionStudents =
             const students =
                 await academicService
                     .getSectionStudents({
-                        sectionId:
-                            req.params.sectionId
+                        sectionId: req.params.sectionId,
+                        userId: req.user.id,
+                        role: req.user.role,
+                        query: req.query.q,
+                        page: req.query.page,
+                        limit: req.query.limit
                     });
 
             return res.status(200).json({
                 success: true,
-                count: students.length,
-                data: students
+                count: students.data.length,
+                data: students.data,
+                pagination: students.pagination
             });
         }
     );
+
+exports.listCourses = asyncHandler(async (req, res) => {
+    const result = await academicService.listCourses({
+        query: req.query.q,
+        page: req.query.page,
+        limit: req.query.limit
+    });
+    return res.status(200).json({ success: true, ...result });
+});
+
+exports.listSections = asyncHandler(async (req, res) => {
+    const result = await academicService.listSections({
+        userId: req.user.id,
+        role: req.user.role,
+        query: req.query.q,
+        page: req.query.page,
+        limit: req.query.limit
+    });
+    return res.status(200).json({ success: true, ...result });
+});
+
+exports.searchUsers = asyncHandler(async (req, res) => {
+    const result = await academicService.searchUsers({
+        role: req.query.role,
+        query: req.query.q,
+        page: req.query.page,
+        limit: req.query.limit
+    });
+    return res.status(200).json({ success: true, ...result });
+});

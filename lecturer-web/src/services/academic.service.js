@@ -10,3 +10,10 @@ export const getSectionStudents = (sectionId) => {
   const encodedSectionId = encodeURIComponent(sectionId);
   return api.get(`/academic/sections/${encodedSectionId}/students`);
 };
+
+export const getCourses = (params = {}) =>
+  api.get("/academic/courses", { params });
+export const getSections = (params = {}) =>
+  api.get("/academic/sections", { params });
+export const searchAcademicUsers = (params = {}) =>
+  api.get("/academic/users", { params });

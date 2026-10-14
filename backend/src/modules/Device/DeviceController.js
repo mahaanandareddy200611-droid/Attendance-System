@@ -4,6 +4,20 @@ const asyncHandler =
 const deviceService =
     require("./DeviceService");
 
+exports.getMyDevice = asyncHandler(async (req, res) => {
+    const device = await deviceService.getMyDevice({ userId: req.user.id });
+    return res.status(200).json({ success: true, data: device });
+});
+
+exports.revokeMyDevice = asyncHandler(async (req, res) => {
+    const device = await deviceService.revokeMyDevice({ userId: req.user.id });
+    return res.status(200).json({
+        success: true,
+        message: device ? "Registered device revoked." : "No active device was registered.",
+        data: device,
+    });
+});
+
 
 exports.registrationChallenge =
     asyncHandler(

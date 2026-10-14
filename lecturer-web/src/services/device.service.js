@@ -2,7 +2,11 @@ import api from "../api/api";
 
 const DB_NAME = "attendance-device-credentials";
 const STORE = "keys";
-const KEY_ID = "active-ed25519-private-key";
+const keyIdFor = (userId) => `active-ed25519-private-key:${userId}`;
+const deviceIdKeyFor = (userId) => `attendanceDeviceId:${userId}`;
+
+export const getMyDevice = () => api.get("/devices/me");
+export const revokeMyDevice = () => api.delete("/devices/me");
 
 function openKeyDb() {
   return new Promise((resolve, reject) => {
@@ -13,11 +17,11 @@ function openKeyDb() {
   });
 }
 
-async function savePrivateKey(key) {
+async function savePrivateKey(key, keyId) {
   const db = await openKeyDb();
   return new Promise((resolve, reject) => {
     const tx = db.transaction(STORE, "readwrite");
-    tx.objectStore(STORE).put(key, KEY_ID);
+    tx.objectStore(STORE).put(key, keyId);
     tx.oncomplete = () => {
       db.close();
       resolve();
@@ -29,13 +33,29 @@ async function savePrivateKey(key) {
   });
 }
 
-export async function getDevicePrivateKey() {
+export async function removeRegisteredBrowserKey(userId) {
+  const db = await openKeyDb();
+  try {
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(STORE, "readwrite");
+      tx.objectStore(STORE).delete(keyIdFor(userId));
+      tx.oncomplete = resolve;
+      tx.onerror = () => reject(tx.error);
+    });
+  } finally {
+    db.close();
+  }
+  localStorage.removeItem(deviceIdKeyFor(userId));
+}
+
+export async function getDevicePrivateKey(userId) {
+  if (!userId) return null;
   const db = await openKeyDb();
   return new Promise((resolve, reject) => {
     const request = db
       .transaction(STORE, "readonly")
       .objectStore(STORE)
-      .get(KEY_ID);
+      .get(keyIdFor(userId));
     request.onsuccess = () => {
       db.close();
       resolve(request.result || null);
@@ -55,36 +75,27 @@ function toBase64(bytes) {
   return btoa(binary);
 }
 
-export async function hasRegisteredDeviceKey() {
-  return Boolean(await getDevicePrivateKey());
+export async function hasRegisteredDeviceKey(userId) {
+  return Boolean(await getDevicePrivateKey(userId));
 }
 
-export async function registerThisBrowser() {
+export async function registerThisBrowser(userId) {
+  if (!userId) throw new Error("Log in before registering this device.");
   if (!window.crypto?.subtle || !window.indexedDB) {
     throw new Error(
       "This browser does not support secure device registration.",
     );
   }
-  const deviceId =
-    localStorage.getItem("attendanceDeviceId") || crypto.randomUUID();
+  const deviceIdKey = deviceIdKeyFor(userId);
+  const deviceId = localStorage.getItem(deviceIdKey) || crypto.randomUUID();
   const challengeResponse = await api.post("/devices/registration-challenge");
   const { challengeId, challenge } = challengeResponse.data.data;
-  const generated = await crypto.subtle.generateKey({ name: "Ed25519" }, true, [
-    "sign",
-    "verify",
-  ]);
-  const publicDer = await crypto.subtle.exportKey("spki", generated.publicKey);
-  const privateDer = await crypto.subtle.exportKey(
-    "pkcs8",
-    generated.privateKey,
-  );
-  const privateKey = await crypto.subtle.importKey(
-    "pkcs8",
-    privateDer,
+  const generated = await crypto.subtle.generateKey(
     { name: "Ed25519" },
     false,
-    ["sign"],
+    ["sign", "verify"],
   );
+  const publicDer = await crypto.subtle.exportKey("spki", generated.publicKey);
   const publicBase64 = toBase64(publicDer);
   const publicKey = `-----BEGIN PUBLIC KEY-----\n${publicBase64.match(/.{1,64}/g).join("\n")}\n-----END PUBLIC KEY-----`;
   const signatureBytes = await crypto.subtle.sign(
@@ -103,17 +114,18 @@ export async function registerThisBrowser() {
     publicKey,
     signature,
   });
-  await savePrivateKey(privateKey);
-  localStorage.setItem("attendanceDeviceId", deviceId);
+  await savePrivateKey(generated.privateKey, keyIdFor(userId));
+  localStorage.setItem(deviceIdKey, deviceId);
   return deviceId;
 }
 
 export async function signAttendanceRequest({
+  userId,
   sessionId,
   token,
   idempotencyKey,
 }) {
-  const privateKey = await getDevicePrivateKey();
+  const privateKey = await getDevicePrivateKey(userId);
   if (!privateKey)
     throw new Error("Register this browser as your attendance device first.");
   const message = ["ATTENDANCE_V1", sessionId, token, idempotencyKey].join("|");

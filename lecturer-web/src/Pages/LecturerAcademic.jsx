@@ -1,14 +1,29 @@
-import { useState } from "react";
-import { Link } from "react-router-dom";
-import { getSectionStudents } from "../services/academic.service";
+import { useEffect, useState } from "react";
+import { useParams } from "react-router-dom";
+import { getSectionStudents, getSections } from "../services/academic.service";
+import { getApiErrorMessage } from "../api/errors";
 import "../Styles/Academic.css";
+import WorkspaceHeader from "../components/WorkspaceHeader";
 
 function LecturerAcademic() {
+  const { sectionId: routeSectionId } = useParams();
   const [sectionId, setSectionId] = useState("");
+  const selectedSectionId = routeSectionId || sectionId;
+  const [sections, setSections] = useState([]);
   const [students, setStudents] = useState([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    getSections({ limit: 100 })
+      .then((response) => setSections(response.data.data || []))
+      .catch((error) =>
+        setError(
+          getApiErrorMessage(error, "Could not load assigned sections."),
+        ),
+      );
+  }, []);
 
   const loadStudents = async (event) => {
     event.preventDefault();
@@ -16,14 +31,15 @@ function LecturerAcademic() {
     setError("");
     setLoaded(false);
     try {
-      const response = await getSectionStudents(sectionId.trim());
+      const response = await getSectionStudents(selectedSectionId.trim());
       setStudents(response.data?.data || []);
       setLoaded(true);
     } catch (requestError) {
       setError(
-        requestError.response?.data?.error?.message ||
-          requestError.response?.data?.message ||
-          "Could not load this section. Check the ID and your Lecturer access.",
+        getApiErrorMessage(
+          requestError,
+          "Could not load this assigned section.",
+        ),
       );
     } finally {
       setLoading(false);
@@ -32,30 +48,32 @@ function LecturerAcademic() {
 
   return (
     <main className="academic-page">
-      <header className="academic-topbar">
-        <Link to="/dashboard" className="academic-brand">
-          Attendance System
-        </Link>
-        <span>Lecturer workspace</span>
-      </header>
+      <WorkspaceHeader />
       <section className="academic-content">
         <div className="academic-heading">
           <div>
             <p className="academic-eyebrow">MY CLASSES</p>
             <h1>Section roster</h1>
-            <p>Look up active students enrolled in a class section.</p>
+            <p>View rosters for sections assigned to your Lecturer account.</p>
           </div>
           <span className="academic-role">Lecturer</span>
         </div>
         <form className="academic-card academic-lookup" onSubmit={loadStudents}>
           <label className="academic-field">
-            <span>Section ID</span>
-            <input
-              value={sectionId}
+            <span>Assigned section</span>
+            <select
+              value={selectedSectionId}
               onChange={(event) => setSectionId(event.target.value)}
-              placeholder="Paste the section ID"
               required
-            />
+            >
+              <option value="">Choose a section</option>
+              {sections.map((section) => (
+                <option key={section._id} value={section._id}>
+                  {section.courseId?.code} · {section.name} ·{" "}
+                  {section.academicYear}
+                </option>
+              ))}
+            </select>
           </label>
           <button className="academic-button" disabled={loading}>
             {loading ? "Loading roster…" : "Load roster"}
@@ -116,8 +134,7 @@ function LecturerAcademic() {
           </section>
         )}
         <p className="academic-footnote">
-          Ask your Admin for the section ID. The current academic API does not
-          include a “my sections” listing endpoint.
+          The server limits this roster endpoint to your assigned sections.
         </p>
       </section>
     </main>

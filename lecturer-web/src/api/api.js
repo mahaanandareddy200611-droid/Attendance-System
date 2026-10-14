@@ -1,4 +1,5 @@
 import axios from "axios";
+import { previewAdapter } from "./previewAdapter";
 
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_BASE_URL || "http://localhost:3000/api/v1",
@@ -13,7 +14,18 @@ const api = axios.create({
 // Attach the logged-in user's JWT to outgoing requests.
 api.interceptors.request.use(
   (config) => {
-    const token = localStorage.getItem("token");
+    if (
+      import.meta.env.DEV &&
+      ["Admin", "Lecturer", "Student"].includes(
+        sessionStorage.getItem("attendance:previewRole"),
+      )
+    ) {
+      config.adapter = previewAdapter;
+      return config;
+    }
+
+    const token =
+      sessionStorage.getItem("token") || localStorage.getItem("token");
 
     if (token) {
       config.headers = config.headers || {};
@@ -48,6 +60,7 @@ api.interceptors.response.use(
     if (error.response?.status === 401 && !isPublicAuthRequest) {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
+      sessionStorage.removeItem("token");
 
       window.dispatchEvent(new Event("attendance:unauthorized"));
     }

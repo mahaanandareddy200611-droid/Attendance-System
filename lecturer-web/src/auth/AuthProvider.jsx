@@ -3,16 +3,34 @@ import {
   GetCurrentUser,
   Login as loginRequest,
 } from "../services/auth.service";
+import { previewUser } from "../api/previewAdapter";
 import { AuthContext } from "./AuthContext";
 
 function clearStoredSession() {
   localStorage.removeItem("token");
   localStorage.removeItem("user");
+  sessionStorage.removeItem("token");
+  sessionStorage.removeItem("user");
+  sessionStorage.removeItem("attendance:previewRole");
 }
 
 export function AuthProvider({ children }) {
-  const [user, setUser] = useState(null);
-  const [loading, setLoading] = useState(true);
+  const [previewMode] = useState(() => {
+    const requestedRole = new URLSearchParams(window.location.search).get(
+      "preview",
+    );
+    const role =
+      requestedRole || sessionStorage.getItem("attendance:previewRole");
+    const preview = previewUser(role);
+
+    if (preview && requestedRole) {
+      sessionStorage.setItem("attendance:previewRole", requestedRole);
+    }
+
+    return preview;
+  });
+  const [user, setUser] = useState(previewMode);
+  const [loading, setLoading] = useState(!previewMode);
 
   const logout = useCallback(() => {
     clearStoredSession();
@@ -20,10 +38,17 @@ export function AuthProvider({ children }) {
   }, []);
 
   useEffect(() => {
+    if (previewMode) return undefined;
     let active = true;
 
     const restoreSession = async () => {
-      if (!localStorage.getItem("token")) {
+      const legacyToken = localStorage.getItem("token");
+      if (legacyToken && !sessionStorage.getItem("token")) {
+        sessionStorage.setItem("token", legacyToken);
+        localStorage.removeItem("token");
+        localStorage.removeItem("user");
+      }
+      if (!sessionStorage.getItem("token")) {
         setLoading(false);
         return;
       }
@@ -32,7 +57,7 @@ export function AuthProvider({ children }) {
         const response = await GetCurrentUser();
         if (active) {
           setUser(response.data.data);
-          localStorage.setItem("user", JSON.stringify(response.data.data));
+          sessionStorage.setItem("user", JSON.stringify(response.data.data));
         }
       } catch {
         clearStoredSession();
@@ -53,7 +78,7 @@ export function AuthProvider({ children }) {
       active = false;
       window.removeEventListener("attendance:unauthorized", onUnauthorized);
     };
-  }, []);
+  }, [previewMode]);
 
   const login = useCallback(async (credentials) => {
     const response = await loginRequest(credentials);
@@ -63,8 +88,8 @@ export function AuthProvider({ children }) {
       throw new Error("The server returned an invalid login response.");
     }
 
-    localStorage.setItem("token", token);
-    localStorage.setItem("user", JSON.stringify(authenticatedUser));
+    sessionStorage.setItem("token", token);
+    sessionStorage.setItem("user", JSON.stringify(authenticatedUser));
     setUser(authenticatedUser);
     return authenticatedUser;
   }, []);

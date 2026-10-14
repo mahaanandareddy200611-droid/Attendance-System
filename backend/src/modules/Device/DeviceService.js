@@ -14,6 +14,24 @@ const {
 const AppError =
     require("../../utils/AppError");
 
+exports.getMyDevice = async ({ userId }) => {
+    const device = await DeviceCredential.findOne({
+        userId,
+        status: "ACTIVE"
+    }).select("deviceId algorithm status createdAt lastUsedAt").lean();
+
+    return device || null;
+};
+
+exports.revokeMyDevice = async ({ userId }) => {
+    const device = await DeviceCredential.findOneAndUpdate(
+        { userId, status: "ACTIVE" },
+        { $set: { status: "REVOKED", revokedAt: new Date() } },
+        { new: true }
+    ).select("deviceId status revokedAt");
+    return device || null;
+};
+
 
 const REGISTRATION_TTL_MS =
     Number(

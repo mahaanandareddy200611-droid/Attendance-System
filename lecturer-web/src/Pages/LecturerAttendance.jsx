@@ -1,19 +1,60 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { Link } from "react-router-dom";
+import { Link, useParams, useNavigate } from "react-router-dom";
+import { getSections } from "../services/academic.service";
 import {
   endAttendanceSession,
+  getAttendanceSessions,
   getAttendanceQr,
   startAttendanceSession,
 } from "../services/attendance-lecturer.service";
+import { getApiErrorMessage } from "../api/errors";
 import "../Styles/Academic.css";
+import WorkspaceHeader from "../components/WorkspaceHeader";
 
 function LecturerAttendance() {
+  const { sessionId: routeSessionId } = useParams();
+  const navigate = useNavigate();
   const [sectionId, setSectionId] = useState("");
+  const [sections, setSections] = useState([]);
+  const [activeSessions, setActiveSessions] = useState([]);
   const [session, setSession] = useState(null);
   const [qrImage, setQrImage] = useState("");
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    Promise.all([
+      getSections({ limit: 100 }),
+      getAttendanceSessions({ status: "ACTIVE", limit: 100 }),
+    ])
+      .then(([sectionResponse, sessionResponse]) => {
+        if (!active) return;
+        setSections(sectionResponse.data.data || []);
+        const sessions = sessionResponse.data.data || [];
+        setActiveSessions(sessions);
+        if (routeSessionId) {
+          const existing = sessions.find(
+            (item) => item.sessionId === routeSessionId,
+          );
+          if (existing) setSession(existing);
+          else
+            setMessage(
+              "This session is no longer active or is not assigned to your account.",
+            );
+        }
+      })
+      .catch((error) => {
+        if (active)
+          setMessage(
+            getApiErrorMessage(error, "Could not load your assigned sessions."),
+          );
+      });
+    return () => {
+      active = false;
+    };
+  }, [routeSessionId]);
 
   useEffect(() => {
     if (!session?.sessionId) return undefined;
@@ -59,6 +100,10 @@ function LecturerAttendance() {
     try {
       const response = await startAttendanceSession(sectionId.trim());
       setSession(response.data.data);
+      setActiveSessions((current) => [response.data.data, ...current]);
+      navigate(`/lecturer/sessions/${response.data.data.sessionId}/live`, {
+        replace: true,
+      });
       setMessage(
         "Attendance session started. Students can scan the rotating QR.",
       );
@@ -79,7 +124,11 @@ function LecturerAttendance() {
     try {
       await endAttendanceSession(session.sessionId);
       setSession(null);
+      setActiveSessions((current) =>
+        current.filter((item) => item.sessionId !== session.sessionId),
+      );
       setQrImage("");
+      navigate("/lecturer/sessions/new", { replace: true });
       setMessage("Attendance session ended.");
     } catch (error) {
       setMessage(
@@ -94,12 +143,7 @@ function LecturerAttendance() {
 
   return (
     <main className="academic-page">
-      <header className="academic-topbar">
-        <Link to="/dashboard" className="academic-brand">
-          Attendance System
-        </Link>
-        <span>Lecturer workspace</span>
-      </header>
+      <WorkspaceHeader />
       <section className="academic-content">
         <div className="academic-heading">
           <div>
@@ -123,13 +167,20 @@ function LecturerAttendance() {
             onSubmit={startSession}
           >
             <label className="academic-field">
-              <span>Section ID</span>
-              <input
+              <span>Assigned section</span>
+              <select
                 value={sectionId}
                 onChange={(event) => setSectionId(event.target.value)}
                 required
-                placeholder="Paste the section ID from your Admin"
-              />
+              >
+                <option value="">Choose a section</option>
+                {sections.map((section) => (
+                  <option key={section._id} value={section._id}>
+                    {section.courseId?.code} · {section.name} ·{" "}
+                    {section.academicYear}
+                  </option>
+                ))}
+              </select>
             </label>
             <button className="academic-button" disabled={loading}>
               {loading ? "Starting…" : "Start attendance"}
@@ -157,6 +208,12 @@ function LecturerAttendance() {
               Keep this QR visible while students scan it. The code refreshes
               automatically.
             </p>
+            <Link
+              className="academic-button"
+              to={`/lecturer/sessions/${session.sessionId}/attendance`}
+            >
+              View attendance results
+            </Link>
             <button
               className="academic-button lecturer-end-button"
               onClick={endSession}
@@ -164,6 +221,19 @@ function LecturerAttendance() {
             >
               {loading ? "Ending…" : "End session"}
             </button>
+          </section>
+        )}
+        {!session && activeSessions.length > 0 && (
+          <section className="academic-card">
+            <h2>Active sessions</h2>
+            {activeSessions.map((activeSession) => (
+              <p key={activeSession.sessionId}>
+                {activeSession.courseCode} · Section {activeSession.section} —{" "}
+                <Link to={`/lecturer/sessions/${activeSession.sessionId}/live`}>
+                  Resume live QR
+                </Link>
+              </p>
+            ))}
           </section>
         )}
         <p className="academic-footnote">

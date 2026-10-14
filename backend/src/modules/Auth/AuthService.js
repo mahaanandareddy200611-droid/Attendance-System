@@ -124,8 +124,6 @@ exports.forgotPassword = async (email) => {
         `,
   });
 
-  console.log("PASSWORD RESET OTP:", otp);
-
   return {
     sent: true,
   };
@@ -243,4 +241,24 @@ exports.GetCurrentUser = async (userId) => {
   }
 
   return user;
+};
+
+exports.CreateLecturer = async ({ name, email, password, mobileNumber }) => {
+    const existing = await User.findOne({ email });
+    if (existing) throw new AppError("Email already registered", 409);
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    try {
+        return await User.create({
+            Name: name,
+            email,
+            password: passwordHash,
+            mobileNumber,
+            role: "Lecturer",
+            status: "ACTIVE"
+        });
+    } catch (error) {
+        if (error.code === 11000) throw new AppError("Email already registered", 409);
+        throw error;
+    }
 };
