@@ -4,6 +4,129 @@ const Enrollment = require("../../models/Enrollment.model");
 const User = require("../../models/Auth.model");
 const AppError = require("../../utils/AppError");
 
+const normalizePage = (value, fallback, maximum) => {
+    const parsed = Number.parseInt(value, 10);
+    return Number.isFinite(parsed) && parsed > 0
+        ? Math.min(parsed, maximum)
+        : fallback;
+};
+
+const pagination = (page, limit, total) => ({
+    page,
+    limit,
+    total,
+    pages: Math.ceil(total / limit)
+});
+
+exports.listCourses = async ({ query = "", page: pageInput, limit: limitInput } = {}) => {
+    const page = normalizePage(pageInput, 1, 100000);
+    const limit = normalizePage(limitInput, 20, 100);
+    const filter = { status: "ACTIVE" };
+
+    if (String(query).trim()) {
+        const expression = new RegExp(
+            String(query).trim().replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+            "i"
+        );
+        filter.$or = [
+            { code: expression },
+            { name: expression },
+            { department: expression }
+        ];
+    }
+
+    const [data, total] = await Promise.all([
+        Course.find(filter)
+            .sort({ code: 1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .lean(),
+        Course.countDocuments(filter)
+    ]);
+
+    return { data, pagination: pagination(page, limit, total) };
+};
+
+exports.listSections = async ({ userId, role, query = "", page: pageInput, limit: limitInput } = {}) => {
+    const page = normalizePage(pageInput, 1, 100000);
+    const limit = normalizePage(limitInput, 20, 100);
+    const filter = { status: "ACTIVE" };
+
+    if (role === "Lecturer") {
+        filter.lecturers = userId;
+    } else if (role === "Student") {
+        const enrollments = await Enrollment.find({
+            studentId: userId,
+            status: "ACTIVE"
+        }).select("sectionId").lean();
+        filter._id = { $in: enrollments.map((item) => item.sectionId) };
+    }
+
+    const normalizedQuery = String(query).trim();
+    if (normalizedQuery) {
+        const escaped = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const matchingCourses = await Course.find({
+            $or: [
+                { code: new RegExp(escaped, "i") },
+                { name: new RegExp(escaped, "i") }
+            ]
+        }).distinct("_id");
+        filter.$or = [
+            { name: new RegExp(escaped, "i") },
+            { academicYear: new RegExp(escaped, "i") },
+            { "room.code": new RegExp(escaped, "i") },
+            { courseId: { $in: matchingCourses } }
+        ];
+    }
+
+    const [data, total] = await Promise.all([
+        ClassSection.find(filter)
+            .populate("courseId", "code name department semester")
+            .sort({ academicYear: -1, name: 1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .lean(),
+        ClassSection.countDocuments(filter)
+    ]);
+
+    return {
+        data,
+        pagination: pagination(page, limit, total)
+    };
+};
+
+exports.searchUsers = async ({ role, query = "", page: pageInput, limit: limitInput } = {}) => {
+    if (!["Student", "Lecturer"].includes(role)) {
+        throw new AppError("A supported user role is required", 400);
+    }
+
+    const page = normalizePage(pageInput, 1, 100000);
+    const limit = normalizePage(limitInput, 20, 100);
+    const filter = { role, status: "ACTIVE" };
+    const normalizedQuery = String(query).trim();
+
+    if (normalizedQuery) {
+        const escaped = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        filter.$or = [
+            { Name: new RegExp(escaped, "i") },
+            { email: new RegExp(escaped, "i") },
+            { RollNumber: new RegExp(escaped, "i") }
+        ];
+    }
+
+    const [data, total] = await Promise.all([
+        User.find(filter)
+            .select("Name email RollNumber role")
+            .sort({ Name: 1 })
+            .skip((page - 1) * limit)
+            .limit(limit)
+            .lean(),
+        User.countDocuments(filter)
+    ]);
+
+    return { data, pagination: pagination(page, limit, total) };
+};
+
 exports.createCourse = async ({
     code,
     name,
@@ -124,6 +247,10 @@ exports.enrollStudent = async ({
         );
     }
 
+    if (student.RollNumber !== rollNumber) {
+        throw new AppError("Roll number does not match the selected student", 400);
+    }
+
     const section = await ClassSection.findOne({
         _id: sectionId,
         status: "ACTIVE"
@@ -168,15 +295,14 @@ exports.enrollStudent = async ({
     }
 };
 
-exports.getSectionStudents = async ({
-    sectionId
-}) => {
+exports.getSectionStudents = async ({ sectionId, userId, role, query = "", page: pageInput, limit: limitInput }) => {
+    const page = normalizePage(pageInput, 1, 100000);
+    const limit = normalizePage(limitInput, 50, 100);
+    const sectionFilter = { _id: sectionId, status: "ACTIVE" };
+    if (role === "Lecturer") sectionFilter.lecturers = userId;
 
     const section = await ClassSection
-        .findOne({
-            _id: sectionId,
-            status: "ACTIVE"
-        })
+        .findOne(sectionFilter)
         .lean();
 
     if (!section) {
@@ -186,10 +312,29 @@ exports.getSectionStudents = async ({
         );
     }
 
-    return Enrollment.find({
+    const filter = {
         sectionId,
         status: "ACTIVE"
-    })
+    };
+    const normalizedQuery = String(query).trim();
+    if (normalizedQuery) {
+        const escaped = normalizedQuery.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const matchingStudents = await User.find({
+            role: "Student",
+            $or: [
+                { Name: new RegExp(escaped, "i") },
+                { email: new RegExp(escaped, "i") },
+                { RollNumber: new RegExp(escaped, "i") }
+            ]
+        }).distinct("_id");
+        filter.$or = [
+            { studentId: { $in: matchingStudents } },
+            { rollNumber: new RegExp(escaped, "i") }
+        ];
+    }
+
+    const [data, total] = await Promise.all([
+        Enrollment.find(filter)
         .populate({
             path: "studentId",
             select: "Name email RollNumber"
@@ -197,5 +342,11 @@ exports.getSectionStudents = async ({
         .sort({
             rollNumber: 1
         })
-        .lean();
+        .skip((page - 1) * limit)
+        .limit(limit)
+        .lean(),
+        Enrollment.countDocuments(filter)
+    ]);
+
+    return { data, pagination: pagination(page, limit, total) };
 };

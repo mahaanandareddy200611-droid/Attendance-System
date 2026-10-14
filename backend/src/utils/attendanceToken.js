@@ -5,7 +5,7 @@ const crypto =
 const QR_REFRESH_MS =
     Number(
         process.env.QR_REFRESH_MS
-    ) || 250;
+    ) || 3000;
 
 const QR_ALLOWED_SKEW_SLOTS =
     Number(
@@ -13,15 +13,15 @@ const QR_ALLOWED_SKEW_SLOTS =
     ) || 1;
 
 
-const SECRET =
-    process.env.ATTENDANCE_TOKEN_SECRET;
-
-
-if (!SECRET) {
-    throw new Error(
-        "ATTENDANCE_TOKEN_SECRET is not configured"
-    );
-}
+const getSecret = () => {
+    const secret = process.env.ATTENDANCE_TOKEN_SECRET;
+    if (!secret) {
+        const error = new Error("ATTENDANCE_TOKEN_SECRET is not configured");
+        error.statusCode = 503;
+        throw error;
+    }
+    return secret;
+};
 
 
 function getCurrentSlot(
@@ -54,7 +54,7 @@ function sign(payloadBase64) {
     return crypto
         .createHmac(
             "sha256",
-            SECRET
+            getSecret()
         )
         .update(payloadBase64)
         .digest("base64url");

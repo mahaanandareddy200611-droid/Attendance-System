@@ -1,6 +1,7 @@
 import { Signup as signupuser } from "../services/auth.service";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { getApiErrorMessage } from "../api/errors";
 import "./../Styles/App.css";
 
 function Signup() {
@@ -10,63 +11,72 @@ function Signup() {
   const [mobileNumber, setMobileNumber] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [role, setRole] = useState("Student");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setErrorMessage("");
 
     if (password !== confirmPassword) {
-      alert("Passwords do not match");
+      setErrorMessage("Passwords do not match.");
       return;
     }
 
+    setSubmitting(true);
     try {
       const data = {
-        name: name,
+        name,
         RollNumber: rollNumber,
-        email: email,
-        password: password,
-        role: role,
+        email,
+        password,
         faceImage_url: "",
-        mobileNumber: mobileNumber
+        mobileNumber,
       };
 
-      const response = await signupuser(data);
-
-      console.log("Signup successful:", response);
-
-      alert(response.data.message);
-
-      navigate("/login");
-
+      await signupuser(data);
+      navigate("/login", {
+        replace: true,
+        state: {
+          notice: "Your student account is ready. Sign in to continue.",
+        },
+      });
     } catch (error) {
-      console.error("Signup failed:", error);
-
-      alert(
-        error.response?.data?.message ||
-        "Signup failed"
+      setErrorMessage(
+        getApiErrorMessage(
+          error,
+          "Signup failed. Please check the information.",
+        ),
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <div className="auth-page">
-      <div className="auth-card">
+      <section className="auth-card">
+        <Link className="auth-brand" to="/login">
+          <span className="auth-logo">A</span>Attendance
+        </Link>
+        <h1>Create your account</h1>
 
-        <h1>Create Account</h1>
+        <p className="subtitle">Create a student account to get started</p>
 
-        <p className="subtitle">
-          Sign up to get started
-        </p>
+        {errorMessage && (
+          <p className="form-message error" role="alert">
+            {errorMessage}
+          </p>
+        )}
 
         <form onSubmit={handleSubmit}>
-
           <div className="input-group">
-            <label>Name</label>
+            <label htmlFor="signup-name">Name</label>
 
             <input
+              id="signup-name"
               type="text"
               placeholder="Enter your name"
               value={name}
@@ -76,21 +86,24 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Roll Number</label>
+            <label htmlFor="signup-roll">Roll number</label>
 
             <input
+              id="signup-roll"
               type="text"
-              placeholder="Enter your roll number"
+              placeholder="24BCS101"
+              pattern="[0-9]{2}B[A-Z]{2}[0-9]{3}"
               value={rollNumber}
-              onChange={(e) => setRollNumber(e.target.value)}
+              onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
               required
             />
           </div>
 
           <div className="input-group">
-            <label>Email</label>
+            <label htmlFor="signup-email">Email</label>
 
             <input
+              id="signup-email"
               type="email"
               placeholder="Enter your email"
               value={email}
@@ -100,9 +113,10 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Mobile Number</label>
+            <label htmlFor="signup-mobile">Mobile number</label>
 
             <input
+              id="signup-mobile"
               type="tel"
               placeholder="Enter your mobile number"
               value={mobileNumber}
@@ -111,26 +125,14 @@ function Signup() {
             />
           </div>
 
-          {/* ROLE */}
           <div className="input-group">
-            <label>Register As</label>
-
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              required
-            >
-              <option value="Student">Student</option>
-              <option value="Lecturer">Lecturer</option>
-            </select>
-          </div>
-
-          <div className="input-group">
-            <label>Password</label>
+            <label htmlFor="signup-password">Password</label>
 
             <input
+              id="signup-password"
               type="password"
               placeholder="Create a password"
+              minLength={6}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
@@ -138,9 +140,10 @@ function Signup() {
           </div>
 
           <div className="input-group">
-            <label>Confirm Password</label>
+            <label htmlFor="signup-confirm">Confirm password</label>
 
             <input
+              id="signup-confirm"
               type="password"
               placeholder="Confirm your password"
               value={confirmPassword}
@@ -149,20 +152,15 @@ function Signup() {
             />
           </div>
 
-          <button type="submit">
-            Sign Up
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Creating account…" : "Sign Up"}
           </button>
-
         </form>
 
         <p className="bottom-text">
-          Already have an account?{" "}
-          <Link to="/login">
-            Login
-          </Link>
+          Already have an account? <Link to="/login">Login</Link>
         </p>
-
-      </div>
+      </section>
     </div>
   );
 }

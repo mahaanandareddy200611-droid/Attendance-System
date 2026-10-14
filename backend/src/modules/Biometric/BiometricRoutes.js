@@ -6,6 +6,8 @@ const Auth =
 
 const authorize =
     require("../../middlewares/authorize");
+const validate = require("../../utils/validate");
+const { challenge: challengeSchema, verify: verifySchema } = require("./BiometricValidator");
 
 const upload =
     require("./BiometricUpload");
@@ -13,12 +15,15 @@ const upload =
 const {
     enroll,
     createChallenge,
-    verify
+    verify,
+    getMyEnrollment
 } = require("./BiometricController");
 
 
 const router =
     express.Router();
+
+router.get("/me", Auth, authorize("Student"), getMyEnrollment);
 
 
 router.post(
@@ -34,6 +39,7 @@ router.post(
     "/challenge",
     Auth,
     authorize("Student"),
+    validate(challengeSchema),
     createChallenge
 );
 
@@ -43,6 +49,7 @@ router.post(
     Auth,
     authorize("Student"),
     upload.single("image"),
+    validate(verifySchema),
     verify
 );
 

@@ -13,7 +13,10 @@ const {
     createCourse,
     createSection,
     enrollStudent,
-    getSectionStudents
+    getSectionStudents,
+    listCourses,
+    listSections,
+    searchUsers
 } = require("./AcademicController");
 
 const {
@@ -23,6 +26,10 @@ const {
 } = require("./AcademicValidator");
 
 const router = express.Router();
+
+router.get("/courses", Auth, authorize("Admin", "Lecturer"), listCourses);
+router.get("/sections", Auth, authorize("Admin", "Lecturer", "Student"), listSections);
+router.get("/users", Auth, authorize("Admin"), searchUsers);
 
 /*
 |--------------------------------------------------------------------------

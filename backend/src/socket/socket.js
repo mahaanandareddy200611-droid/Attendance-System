@@ -16,6 +16,7 @@ const {
 
 const AttendanceSession =
     require("../models/AttendanceSession.model");
+const User = require("../models/Auth.model");
 
 
 let io = null;
@@ -162,7 +163,7 @@ const initializeSocket =
         */
 
         io.use(
-            (socket, next) => {
+            async (socket, next) => {
 
                 try {
 
@@ -187,11 +188,18 @@ const initializeSocket =
                     }
 
 
-                    const user =
+                    const tokenUser =
                         jwt.verify(
                             token,
                             process.env.JWT_SECRET
                         );
+
+                    const userId = tokenUser.id || tokenUser.sub;
+                    const user = await User.findById(userId).select("role status").lean();
+
+                    if (!user || user.status !== "ACTIVE") {
+                        return next(new Error("Active account required"));
+                    }
 
 
                     if (
@@ -207,8 +215,11 @@ const initializeSocket =
                     }
 
 
-                    socket.user =
-                        user;
+                    socket.user = {
+                        ...tokenUser,
+                        id: String(user._id),
+                        role: user.role,
+                    };
 
 
                     next();

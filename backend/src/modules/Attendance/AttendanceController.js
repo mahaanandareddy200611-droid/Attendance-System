@@ -3,6 +3,50 @@ const asyncHandler =
 
 const attendanceService =
     require("./AttendanceService");
+const attendanceQueryService = require("./AttendanceQueryService");
+
+exports.listSessions = asyncHandler(async (req, res) => {
+    const result = await attendanceQueryService.listSessions({
+        userId: req.user.id,
+        role: req.user.role,
+        query: req.query
+    });
+    return res.status(200).json({ success: true, ...result });
+});
+
+exports.listAvailableStudentSessions = asyncHandler(async (req, res) => {
+    const result = await attendanceQueryService.listAvailableStudentSessions({
+        studentId: req.user.id
+    });
+    return res.status(200).json({ success: true, ...result });
+});
+
+exports.listSessionRecords = asyncHandler(async (req, res) => {
+    const result = await attendanceQueryService.listSessionRecords({
+        sessionId: req.params.sessionId,
+        userId: req.user.id,
+        role: req.user.role,
+        query: req.query
+    });
+    return res.status(200).json({ success: true, ...result });
+});
+
+exports.listMyRecords = asyncHandler(async (req, res) => {
+    const result = await attendanceQueryService.listStudentRecords({
+        studentId: req.user.id,
+        query: req.query
+    });
+    return res.status(200).json({ success: true, ...result });
+});
+
+exports.listAdminRecords = asyncHandler(async (req, res) => {
+    const result = await attendanceQueryService.listAdminRecords({
+        userId: req.user.id,
+        role: req.user.role,
+        query: req.query
+    });
+    return res.status(200).json({ success: true, ...result });
+});
 
 exports.createSession =
     asyncHandler(async (req, res) => {

@@ -6,11 +6,6 @@ const mongoose =
 const ClassSection =
     require("../../models/ClassSection.model");
 
-const {
-    verify:
-        verifyBiometric
-} = require("../Biometric/BiometricService");
-
 const Enrollment =
     require("../../models/Enrollment.model");
 
@@ -30,7 +25,9 @@ const {
 
 const {
     consumeAssertion:
-        consumeBiometricAssertion
+        consumeBiometricAssertion,
+    validateAssertion:
+        validateBiometricAssertion
 } = require("../Biometric/BiometricService");
 
 const {
@@ -50,7 +47,8 @@ const AttendanceAttempt =
 
 const {
     claimIdempotency,
-    completeIdempotency
+    completeIdempotency,
+    releaseIdempotency
 } = require("./IdempotencyService");
 
 const AuditEvent =
@@ -542,7 +540,7 @@ exports.getCurrentQr = async ({
         refreshMs:
             Number(
                 process.env.QR_REFRESH_MS
-            ) || 250
+            ) || 3000
     };
 };
 
@@ -632,6 +630,16 @@ exports.endSession = async ({
 
                 endedSession =
                     session;
+
+                // Freeze every student who did not check in as absent when the session ends.
+                await AttendanceSessionStudent.updateMany(
+                    {
+                        sessionId: session._id,
+                        status: { $in: ["ELIGIBLE", "LATE"] }
+                    },
+                    { $set: { status: "ABSENT" } },
+                    { session: dbSession }
+                );
 
                 await AuditEvent.create(
                     [
@@ -839,6 +847,28 @@ exports.verifyAttendance = async ({
         throw new AppError("Valid GPS data is required", 400);
     }
 
+    const now = Date.now();
+    const maxGpsAccuracy = Number(process.env.ATTENDANCE_MAX_GPS_ACCURACY_METERS) || 150;
+    const maxGpsAgeMs = Number(process.env.ATTENDANCE_MAX_GPS_AGE_MS) || 120000;
+    const gpsAgeMs = now - gpsCapturedAt.getTime();
+    if (
+        studentAccuracy > maxGpsAccuracy ||
+        gpsAgeMs > maxGpsAgeMs ||
+        gpsAgeMs < -30000
+    ) {
+        await AttendanceAttempt.create({
+            sessionId: session._id,
+            studentId,
+            result: "GPS_UNRELIABLE",
+            ipAddress,
+            userAgent
+        });
+        throw new AppError(
+            "Location is too imprecise or out of date. Enable precise location and try again.",
+            422
+        );
+    }
+
     const classroom = session.classroomSnapshot;
     const distance = distanceMeters({
         latitude1: studentLatitude,
@@ -984,91 +1014,22 @@ exports.verifyAttendance = async ({
         );
     }
 
-    /*
-    --------------------------------------------------
-    9. ATOMIC IDEMPOTENCY CLAIM
-    --------------------------------------------------
-    */
-
-    const idempotencyResult =
-        await claimIdempotency({
-            key:
-                idempotencyKey,
-
-            studentId,
-
-            sessionId:
-                session._id,
-
-            token,
-            deviceId
-        });
-
-
-    if (
-        idempotencyResult.replayed
-    ) {
-
-        return {
-            replayed:
-                true,
-
-            status:
-                idempotencyResult
-                    .responseStatus,
-
-            body:
-                idempotencyResult
-                    .responseBody
-        };
+    if (!deviceId || !deviceSignature) {
+        throw new AppError("Registered device proof is required", 401);
     }
 
-    
-
-    
-
-
-    const {
-        ownerToken
-    } = idempotencyResult;
-
-
-
-    /*
---------------------------------------------------
-BIOMETRIC ASSERTION
---------------------------------------------------
-*/
-
-const biometricAssertion =
-    await consumeBiometricAssertion({
-        assertionId:
-            biometricAssertionId,
-
-        userId:
-            studentId,
-
-        sessionId:
-            session.sessionId
+    // Check the assertion before claiming idempotency; consume it only after a replay check.
+    await validateBiometricAssertion({
+        assertionId: biometricAssertionId,
+        userId: studentId,
+        sessionId: session.sessionId
     });
+
     /*
     --------------------------------------------------
-    8. DEVICE CRYPTOGRAPHIC VERIFICATION
+    9. DEVICE CRYPTOGRAPHIC VERIFICATION
     --------------------------------------------------
     */
-
-    if (
-        !deviceId ||
-        !deviceSignature
-    ) {
-
-        throw new AppError(
-            "Registered device proof is required",
-            401
-        );
-    }
-
-
     await verifyAttendanceDevice({
         userId:
             studentId,
@@ -1086,17 +1047,50 @@ const biometricAssertion =
         idempotencyKey
     });
 
-
-    
-
     /*
     --------------------------------------------------
-    10. QR REPLAY CLAIM
+    10. ATOMIC IDEMPOTENCY CLAIM
     --------------------------------------------------
     */
 
-    const qrUse =
-        await claimQrUse({
+    const idempotencyResult = await claimIdempotency({
+        key: idempotencyKey,
+        studentId,
+        sessionId: session._id,
+        token,
+        deviceId
+    });
+
+    if (idempotencyResult.replayed) {
+        return {
+            replayed: true,
+            status: idempotencyResult.responseStatus,
+            body: idempotencyResult.responseBody
+        };
+    }
+
+    const { ownerToken } = idempotencyResult;
+
+    try {
+        await consumeBiometricAssertion({
+            assertionId: biometricAssertionId,
+            userId: studentId,
+            sessionId: session.sessionId
+        });
+    } catch (error) {
+        await releaseIdempotency({ key: idempotencyKey, ownerToken });
+        throw error;
+    }
+
+    /*
+    --------------------------------------------------
+    11. QR REPLAY CLAIM
+    --------------------------------------------------
+    */
+
+    let qrUse;
+    try {
+        qrUse = await claimQrUse({
             sessionId:
                 session._id.toString(),
 
@@ -1108,6 +1102,10 @@ const biometricAssertion =
             nonce:
                 tokenResult.payload.nonce
         });
+    } catch (error) {
+        await releaseIdempotency({ key: idempotencyKey, ownerToken });
+        throw error;
+    }
 
 
     /*
@@ -1134,7 +1132,6 @@ const biometricAssertion =
             }
         };
 
-    try{    
         await completeIdempotency({
             key:
                 idempotencyKey,
@@ -1160,63 +1157,6 @@ const biometricAssertion =
                 response
         };
     }
-
-     catch (error) {
-
-    await completeIdempotency({
-        key: idempotencyKey,
-        ownerToken,
-
-        responseStatus:
-            error.statusCode || 401,
-
-        responseBody: {
-            success: false,
-            error: {
-                code:
-                    "DEVICE_VERIFICATION_FAILED",
-                message:
-                    error.message
-            }
-        }
-    });
-
-    throw error;
-}}
-
-    /*
---------------------------------------------------
-BIOMETRIC VERIFICATION
---------------------------------------------------
-*/
-
-if (
-    !biometricChallengeId ||
-    !biometricAssertion
-) {
-
-    throw new AppError(
-        "Biometric verification is required",
-        401
-    );
-}
-
-
-const biometricResult =
-    await verifyBiometric({
-        userId:
-            studentId,
-
-        sessionId:
-            session.sessionId,
-
-        challengeId:
-            biometricChallengeId,
-
-        assertion:
-            biometricAssertion
-    });
-
 
     /*
     --------------------------------------------------
@@ -1500,6 +1440,8 @@ const biometricResult =
                 );
             }
         );
+
+        await releaseIdempotency({ key: idempotencyKey, ownerToken });
 
         throw error;
 

@@ -7,6 +7,11 @@ const AppError =
 const biometricService =
     require("./BiometricService");
 
+exports.getMyEnrollment = asyncHandler(async (req, res) => {
+    const enrollment = await biometricService.getMyEnrollment({ userId: req.user.id });
+    return res.status(200).json({ success: true, data: enrollment });
+});
+
 
 exports.enroll =
     asyncHandler(

@@ -295,3 +295,7 @@ exports.completeIdempotency =
             );
         }
     };
+
+exports.releaseIdempotency = async ({ key, ownerToken }) => {
+    await Idempotency.deleteOne({ key, ownerToken, status: "PROCESSING" });
+};
