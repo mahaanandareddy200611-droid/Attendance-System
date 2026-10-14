@@ -2,31 +2,21 @@ const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
 const crypto = require("crypto");
-const mongoose =
-    require("mongoose");
+const mongoose = require("mongoose");
 
-const {
-    redisClient
-} = require("./config/redis");
-const academicRoutes =
-    require("./modules/academic/AcademicRoutes");
+const { redisClient } = require("./config/redis");
+const academicRoutes = require("./modules/academic/AcademicRoutes");
 
-const DeviceRoutes =
-    require("./modules/Device/DeviceRoutes");
-    
+const DeviceRoutes = require("./modules/Device/DeviceRoutes");
 
-const BiometricRoutes =
-    require("./modules/Biometric/BiometricRoutes");
-const AttendanceRoutes =
-    require("./modules/Attendance/AttendanceRouter");
+const BiometricRoutes = require("./modules/Biometric/BiometricRoutes");
+const AttendanceRoutes = require("./modules/Attendance/AttendanceRouter");
 
-const AuthRoutes =
-    require("./modules/Auth/AuthRouter");
+const AuthRoutes = require("./modules/Auth/AuthRouter");
 
 const app = express();
 
-
-app.disable("x-powered-by");  // to hide it was by this express framw work or some other 
+app.disable("x-powered-by"); // to hide it was by this express framw work or some other
 
 /*
 |--------------------------------------------------------------------------
@@ -55,7 +45,10 @@ app.use(
         return callback(null, true);
       }
 
-      const allowedOrigins = (process.env.CORS_ORIGINS || "http://localhost:5173,http://127.0.0.1:5173")
+      const allowedOrigins = (
+        process.env.CORS_ORIGINS ||
+        "http://localhost:5173,http://127.0.0.1:5173"
+      )
         .split(",")
         .map((value) => value.trim())
         .filter(Boolean);
@@ -64,11 +57,13 @@ app.use(
         return callback(null, true);
       }
 
-      return callback(new Error("Origin is not allowed"));
+      const error = new Error("Origin is not allowed");
+      error.statusCode = 403;
+      return callback(error);
     },
 
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-  })
+  }),
 );
 
 /*
@@ -90,7 +85,7 @@ app.use(
   express.json({
     limit: "32kb",
     strict: true,
-  })
+  }),
 );
 
 /*
@@ -162,88 +157,47 @@ app.get("/api/v1/health", (req, res) => {
     requestId: req.id,
   });
 });
-app.get(
-    "/api/v1/livez",
-    (req, res) => {
+app.get("/api/v1/livez", (req, res) => {
+  res.status(200).json({
+    success: true,
+    status: "alive",
+    requestId: req.id,
+  });
+});
 
-        res.status(200).json({
-            success: true,
-            status: "alive",
-            requestId: req.id
-        });
-    }
-);
+app.get("/api/v1/readyz", (req, res) => {
+  const mongoReady = mongoose.connection.readyState === 1;
 
-app.get(
-    "/api/v1/readyz",
-    (req, res) => {
+  const redisReady = redisClient.isReady;
 
-        const mongoReady =
-            mongoose.connection.readyState === 1;
+  const ready = mongoReady && redisReady;
 
-        const redisReady =
-            redisClient.isReady;
+  return res.status(ready ? 200 : 503).json({
+    success: ready,
+    status: ready ? "ready" : "not_ready",
 
-        const ready =
-            mongoReady &&
-            redisReady;
+    dependencies: {
+      mongodb: mongoReady,
 
-        return res
-            .status(
-                ready
-                    ? 200
-                    : 503
-            )
-            .json({
-                success: ready,
-                status: ready
-                    ? "ready"
-                    : "not_ready",
+      redis: redisReady,
+    },
 
-                dependencies: {
-                    mongodb:
-                        mongoReady,
-
-                    redis:
-                        redisReady
-                },
-
-                requestId:
-                    req.id
-            });
-    }
-);
+    requestId: req.id,
+  });
+});
 //================================================================================================
-/// routes for all the development 
+/// routes for all the development
 //=======================================================================================================
 
+app.use("/api/v1/auth", AuthRoutes);
 
-app.use(
-    "/api/v1/auth",
-    AuthRoutes
-);
+app.use("/api/v1/academic", academicRoutes);
 
-app.use(
-    "/api/v1/academic",
-    academicRoutes
-);
+app.use("/api/v1/devices", DeviceRoutes);
 
-app.use(
-    "/api/v1/devices",
-    DeviceRoutes
-);  
+app.use("/api/v1/biometric", BiometricRoutes);
 
-
-
-app.use(
-    "/api/v1/biometric",
-    BiometricRoutes
-);
-
-app.use(
-    "/api/v1/attendance",
-    AttendanceRoutes
-);
+app.use("/api/v1/attendance", AttendanceRoutes);
 
 /*
 |--------------------------------------------------------------------------
@@ -296,8 +250,11 @@ app.use((err, req, res, next) => {
   return res.status(statusCode).json({
     success: false,
     error: {
-      code: err.providerCode || (statusCode === 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
-      message: statusCode === 500 ? "An unexpected error occurred" : err.message,
+      code:
+        err.providerCode ||
+        (statusCode === 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
+      message:
+        statusCode === 500 ? "An unexpected error occurred" : err.message,
     },
     requestId: req.id,
   });

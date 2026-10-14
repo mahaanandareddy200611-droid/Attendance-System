@@ -1,72 +1,59 @@
 import { useState } from "react";
-import { Link, useNavigate } from "react-router-dom";
-import { Login as loginUser } from "../services/auth.service";
+import { Link, useLocation, useNavigate } from "react-router-dom";
+import { useAuth } from "../auth/useAuth";
+import { getApiErrorMessage } from "../api/errors";
 import "./../Styles/App.css";
 
 function Login() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const navigate = useNavigate();
+  const location = useLocation();
+  const { login } = useAuth();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setErrorMessage("");
+    setSubmitting(true);
 
     try {
-      const response = await loginUser({
-        email,
-        password,
+      const user = await login({ email, password });
+      const defaultPath = {
+        Admin: "/admin/academic",
+        Lecturer: "/dashboard",
+        Student: "/student/academic",
+      }[user.role];
+
+      if (!defaultPath)
+        throw new Error("Your account has an unsupported role.");
+      navigate(location.state?.from?.pathname || defaultPath, {
+        replace: true,
       });
-
-      console.log("Login successful:", response);
-
-      // Save JWT token
-      localStorage.setItem("token", response.data.token);
-
-      // Save user details
-      localStorage.setItem(
-        "user",
-        JSON.stringify(response.data.data)
-      );
-
-      // Get user's role
-      const role = response.data.data.role;
-
-      console.log("User role:", role);
-
-      // Navigate based on role
-      if (role === "Lecturer") {
-        navigate("/dashboard");
-      } else if (role === "Admin") {
-        navigate("/admin/academic");
-      } else if (role === "Student") {
-        navigate("/student/academic");
-      } else {
-        alert("Unknown user role");
-      }
-
     } catch (error) {
-      console.error("Login failed:", error);
-
-      alert(
-        error.response?.data?.message ||
-        "Invalid email or password"
+      setErrorMessage(
+        getApiErrorMessage(
+          error,
+          "Login failed. Check your email and password.",
+        ),
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <div className="auth-page">
       <div className="auth-card">
-
         <h1>Welcome Back</h1>
 
-        <p className="subtitle">
-          Login to your account
-        </p>
+        <p className="subtitle">Login to your account</p>
+
+        {errorMessage && <p role="alert">{errorMessage}</p>}
 
         <form onSubmit={handleSubmit}>
-
           <div className="input-group">
             <label>Email</label>
 
@@ -92,24 +79,17 @@ function Login() {
           </div>
 
           <p className="forgot-password">
-            <Link to="/forgot-password">
-              Forgot Password?
-            </Link>
+            <Link to="/forgot-password">Forgot Password?</Link>
           </p>
 
-          <button type="submit">
-            Login
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Signing in…" : "Login"}
           </button>
-
         </form>
 
         <p className="bottom-text">
-          Don't have an account?{" "}
-          <Link to="/signup">
-            Sign Up
-          </Link>
+          Don't have an account? <Link to="/signup">Sign Up</Link>
         </p>
-
       </div>
     </div>
   );

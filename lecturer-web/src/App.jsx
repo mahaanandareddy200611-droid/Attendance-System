@@ -9,58 +9,66 @@ import StudentAcademic from "./Pages/StudentAcademic";
 import Login from "./Pages/Login";
 import Signup from "./Pages/Signup";
 import ForgotPassword from "./Pages/ForgotPassword";
-
-function RoleRoute({ roles, children }) {
-  const token = localStorage.getItem("token");
-  const role = (() => {
-    try { return JSON.parse(localStorage.getItem("user") || "{}").role || ""; }
-    catch { return ""; }
-  })();
-  if (!token) return <Navigate to="/login" replace />;
-  if (!roles.includes(role)) {
-    const routeByRole = { Admin: "/admin/academic", Lecturer: "/dashboard", Student: "/student/academic" };
-    return <Navigate to={routeByRole[role] || "/login"} replace />;
-  }
-  return children;
-}
+import { AuthProvider } from "./auth/AuthProvider";
+import ProtectedRoute from "./auth/ProtectedRoute";
 
 function App() {
   return (
-    <Routes>
+    <AuthProvider>
+      <Routes>
+        <Route path="/login" element={<Login />} />
 
-      <Route
-        path="/login"
-        element={<Login />}
-      />
+        <Route path="/signup" element={<Signup />} />
 
-      <Route
-        path="/signup"
-        element={<Signup />}
-      />
+        <Route path="/forgot-password" element={<ForgotPassword />} />
 
-      <Route
-        path="/forgot-password"
-        element={<ForgotPassword />}
-      />
+        {/* Lecturer */}
+        <Route
+          path="/dashboard"
+          element={
+            <ProtectedRoute roles={["Lecturer"]}>
+              <Dashboard />
+            </ProtectedRoute>
+          }
+        />
 
-      {/* Lecturer */}
-      <Route
-        path="/dashboard"
-        element={<RoleRoute roles={["Lecturer"]}><Dashboard /></RoleRoute>}
-      />
+        <Route
+          path="/admin/academic"
+          element={
+            <ProtectedRoute roles={["Admin"]}>
+              <AdminAcademic />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/lecturer/academic"
+          element={
+            <ProtectedRoute roles={["Lecturer"]}>
+              <LecturerAcademic />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/lecturer/attendance"
+          element={
+            <ProtectedRoute roles={["Lecturer"]}>
+              <LecturerAttendance />
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/student/academic"
+          element={
+            <ProtectedRoute roles={["Student"]}>
+              <StudentAcademic />
+            </ProtectedRoute>
+          }
+        />
 
-      <Route path="/admin/academic" element={<RoleRoute roles={["Admin"]}><AdminAcademic /></RoleRoute>} />
-      <Route path="/lecturer/academic" element={<RoleRoute roles={["Lecturer"]}><LecturerAcademic /></RoleRoute>} />
-      <Route path="/lecturer/attendance" element={<RoleRoute roles={["Lecturer"]}><LecturerAttendance /></RoleRoute>} />
-      <Route path="/student/academic" element={<RoleRoute roles={["Student"]}><StudentAcademic /></RoleRoute>} />
-
-      {/* Unknown URL */}
-      <Route
-        path="*"
-        element={<Navigate to="/login" />}
-      />
-
-    </Routes>
+        {/* Unknown URL */}
+        <Route path="*" element={<Navigate to="/login" />} />
+      </Routes>
+    </AuthProvider>
   );
 }
 

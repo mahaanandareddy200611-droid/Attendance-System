@@ -7,119 +7,106 @@ const crypto = require("crypto");
 
 const { sendMail } = require("../../utils/sendMail");
 
-
 exports.Signup = async (
-    name,
+  name,
+  RollNumber,
+  email,
+  password,
+  faceImage_url,
+  mobileNumber,
+) => {
+  const existingEmail = await User.findOne({ email });
+
+  if (existingEmail) {
+    throw new AppError("Email already registered", 409);
+  }
+
+  if (RollNumber) {
+    const existingRoll = await User.findOne({ RollNumber });
+
+    if (existingRoll) {
+      throw new AppError("Roll number already registered", 409);
+    }
+  }
+
+  const passwordHash = await bcrypt.hash(password, 12);
+
+  const user = await User.create({
+    Name: name,
     RollNumber,
     email,
-    password,
-    role,
+    password: passwordHash,
+    mobileNumber,
     faceImage_url,
-    mobileNumber
-) => {
+    // Public registration is student-only. Privileged accounts are provisioned separately.
+    role: "Student",
+  });
 
-    const existingEmail = await User.findOne({ email });
-
-    if (existingEmail) {
-        throw new AppError("Email already registered", 409);
-    }
-
-    if (RollNumber) {
-        const existingRoll = await User.findOne({ RollNumber });
-
-        if (existingRoll) {
-            throw new AppError("Roll number already registered", 409);
-        }
-    }
-
-    const passwordHash = await bcrypt.hash(password, 12);
-
-    const user = await User.create({
-        Name: name,
-        RollNumber,
-        email,
-        password: passwordHash,
-        mobileNumber,
-        faceImage_url,
-        role: role || "Student"
-    });
-
-    return user;
+  return user;
 };
-
 
 exports.Login = async (email, password) => {
+  const user = await User.findOne({ email }).select("+password");
 
-    const user = await User
-        .findOne({ email })
-        .select("+password");
+  if (!user) {
+    throw new AppError("Invalid email or password", 401);
+  }
 
-    if (!user) {
-        throw new AppError("Invalid email or password", 401);
-    }
+  const isPasswordValid = await bcrypt.compare(password, user.password);
 
-    const isPasswordValid = await bcrypt.compare(
-        password,
-        user.password
-    );
+  if (!isPasswordValid) {
+    throw new AppError("Invalid email or password", 401);
+  }
 
-    if (!isPasswordValid) {
-        throw new AppError("Invalid email or password", 401);
-    }
+  if (user.status !== "ACTIVE") {
+    throw new AppError("This account is not active.", 403);
+  }
 
-    const token = jwt.sign(
-        {
-            id: user._id,
-            role: user.role
-        },
-        process.env.JWT_SECRET,
-        {
-            expiresIn: process.env.JWT_EXPIRES_IN || "1d"
-        }
-    );
+  const token = jwt.sign(
+    {
+      id: user._id,
+      role: user.role,
+    },
+    process.env.JWT_SECRET,
+    {
+      expiresIn: process.env.JWT_EXPIRES_IN || "1d",
+    },
+  );
 
-    return {
-        user,
-        token
-    };
+  return {
+    user,
+    token,
+  };
 };
 
-
 exports.forgotPassword = async (email) => {
+  const user = await User.findOne({ email });
 
-    const user = await User.findOne({ email });
+  if (!user) {
+    throw new AppError("Email not found", 404);
+  }
 
-    if (!user) {
-        throw new AppError("Email not found", 404);
-    }
+  const otp = crypto.randomInt(100000, 1000000).toString();
 
-    const otp = crypto
-        .randomInt(100000, 1000000)
-        .toString();
+  const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
 
-    const otpHash = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
+  user.passwordResetOtpHash = otpHash;
 
-    user.passwordResetOtpHash = otpHash;
+  user.passwordResetOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
 
-    user.passwordResetOtpExpires =
-        new Date(Date.now() + 5 * 60 * 1000);
+  user.passwordResetOtpAttempts = 0;
 
-    user.passwordResetOtpAttempts = 0;
+  user.passwordResetVerifiedUntil = null;
 
-    user.passwordResetVerifiedUntil = null;
+  await user.save();
 
-    await user.save();
+  await sendMail({
+    to: email,
+    subject: "Attendence System Password Reset OTP",
 
-    await sendMail({
-        to: email,
-        subject: "Attendence System Password Reset OTP",
+    text: `Your Attendence System reset OTP is ${otp}. It is valid for 5 minutes.`,
 
-        text: `Your Attendence System reset OTP is ${otp}. It is valid for 5 minutes.`,
-
-        html: `
+    html: `
             <h2>Attendence System Password Reset</h2>
 
             <p>Your password reset OTP is:</p>
@@ -134,127 +121,126 @@ exports.forgotPassword = async (email) => {
                 If you did not request this password reset,
                 please ignore this email.
             </p>
-        `
-    });
+        `,
+  });
 
-    console.log("PASSWORD RESET OTP:", otp);
+  console.log("PASSWORD RESET OTP:", otp);
 
-    return {
-        sent: true
-    };
+  return {
+    sent: true,
+  };
 };
-
 
 exports.verifyResetOTP = async (otp, email) => {
+  if (!otp) {
+    throw new AppError("OTP is required", 400);
+  }
 
-    if (!otp) {
-        throw new AppError("OTP is required", 400);
-    }
+  if (!email) {
+    throw new AppError("Email is required", 400);
+  }
 
-    if (!email) {
-        throw new AppError("Email is required", 400);
-    }
+  const user = await User.findOne({ email }).select(
+    "+passwordResetOtpHash " +
+      "+passwordResetOtpExpires " +
+      "+passwordResetOtpAttempts",
+  );
 
-    const user = await User
-        .findOne({ email })
-        .select(
-            "+passwordResetOtpHash " +
-            "+passwordResetOtpExpires " +
-            "+passwordResetOtpAttempts"
-        );
+  if (!user) {
+    throw new AppError("Email not found", 404);
+  }
 
-    if (!user) {
-        throw new AppError("Email not found", 404);
-    }
+  if (!user.passwordResetOtpHash) {
+    throw new AppError("No OTP request found", 400);
+  }
 
-    if (!user.passwordResetOtpHash) {
-        throw new AppError("No OTP request found", 400);
-    }
+  if (user.passwordResetOtpAttempts >= 5) {
+    throw new AppError("Too many incorrect OTP attempts", 429);
+  }
 
-    if (user.passwordResetOtpAttempts >= 5) {
-        throw new AppError(
-            "Too many incorrect OTP attempts",
-            429
-        );
-    }
+  if (
+    !user.passwordResetOtpExpires ||
+    user.passwordResetOtpExpires.getTime() <= Date.now()
+  ) {
+    throw new AppError("OTP expired", 400);
+  }
 
-    if (
-        !user.passwordResetOtpExpires ||
-        user.passwordResetOtpExpires.getTime() <= Date.now()
-    ) {
-        throw new AppError("OTP expired", 400);
-    }
+  const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
 
-    const otpHash = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
+  const isMatch = otpHash === user.passwordResetOtpHash;
 
-    const isMatch =
-        otpHash === user.passwordResetOtpHash;
-
-    if (!isMatch) {
-
-        user.passwordResetOtpAttempts += 1;
-
-        await user.save();
-
-        throw new AppError("Incorrect OTP", 400);
-    }
-
-    user.passwordResetVerifiedUntil =
-        new Date(Date.now() + 10 * 60 * 1000);
-
-    user.passwordResetOtpHash = null;
-    user.passwordResetOtpExpires = null;
-    user.passwordResetOtpAttempts = 0;
+  if (!isMatch) {
+    user.passwordResetOtpAttempts += 1;
 
     await user.save();
 
-    return {
-        verified: true
-    };
+    throw new AppError("Incorrect OTP", 400);
+  }
+
+  user.passwordResetVerifiedUntil = new Date(Date.now() + 10 * 60 * 1000);
+
+  user.passwordResetOtpHash = null;
+  user.passwordResetOtpExpires = null;
+  user.passwordResetOtpAttempts = 0;
+
+  await user.save();
+
+  return {
+    verified: true,
+  };
 };
 
-
 exports.password = async (password, email) => {
+  if (!password) {
+    throw new AppError("Password is required", 400);
+  }
 
-    if (!password) {
-        throw new AppError("Password is required", 400);
-    }
+  if (!email) {
+    throw new AppError("Email is required", 400);
+  }
 
-    if (!email) {
-        throw new AppError("Email is required", 400);
-    }
+  const user = await User.findOne({ email }).select(
+    "+passwordResetVerifiedUntil",
+  );
 
-    const user = await User
-        .findOne({ email })
-        .select("+passwordResetVerifiedUntil");
+  if (!user) {
+    throw new AppError("Email not found", 404);
+  }
 
-    if (!user) {
-        throw new AppError("Email not found", 404);
-    }
+  if (
+    !user.passwordResetVerifiedUntil ||
+    user.passwordResetVerifiedUntil.getTime() <= Date.now()
+  ) {
+    throw new AppError("OTP verification required or expired", 400);
+  }
 
-    if (
-        !user.passwordResetVerifiedUntil ||
-        user.passwordResetVerifiedUntil.getTime() <= Date.now()
-    ) {
-        throw new AppError(
-            "OTP verification required or expired",
-            400
-        );
-    }
+  const hashedPassword = await bcrypt.hash(password, 12);
 
-    const hashedPassword =
-        await bcrypt.hash(password, 12);
+  user.password = hashedPassword;
 
-    user.password = hashedPassword;
+  user.passwordResetVerifiedUntil = null;
 
-    user.passwordResetVerifiedUntil = null;
+  await user.save();
 
-    await user.save();
+  return {
+    updated: true,
+  };
+};
 
-    return {
-        updated: true
-    };
+exports.GetCurrentUser = async (userId) => {
+  if (!userId) {
+    throw new AppError("Authentication required", 401);
+  }
+
+  const user = await User.findById(userId);
+
+  if (!user) {
+    throw new AppError("Session is no longer valid. Please login again.", 401);
+  }
+
+  if (user.status && user.status !== "ACTIVE") {
+    throw new AppError("This account is not active.", 403);
+  }
+
+  return user;
 };

@@ -7,7 +7,9 @@ export async function enrollBiometric(image) {
 }
 
 export async function verifyBiometricForSession({ sessionId, image }) {
-  const challengeResponse = await api.post("/biometric/challenge", { sessionId });
+  const challengeResponse = await api.post("/biometric/challenge", {
+    sessionId,
+  });
   const { challengeId } = challengeResponse.data.data;
   const form = new FormData();
   form.append("sessionId", sessionId);

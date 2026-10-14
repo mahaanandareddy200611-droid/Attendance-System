@@ -1,6 +1,7 @@
 import { Signup as signupuser } from "../services/auth.service";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
+import { getApiErrorMessage } from "../api/errors";
 import "./../Styles/App.css";
 
 function Signup() {
@@ -10,59 +11,56 @@ function Signup() {
   const [mobileNumber, setMobileNumber] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
-  const [role, setRole] = useState("Student");
+  const [errorMessage, setErrorMessage] = useState("");
+  const [submitting, setSubmitting] = useState(false);
 
   const navigate = useNavigate();
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    setErrorMessage("");
 
     if (password !== confirmPassword) {
-      alert("Passwords do not match");
+      setErrorMessage("Passwords do not match.");
       return;
     }
 
+    setSubmitting(true);
     try {
       const data = {
-        name: name,
+        name,
         RollNumber: rollNumber,
-        email: email,
-        password: password,
-        role: role,
+        email,
+        password,
         faceImage_url: "",
-        mobileNumber: mobileNumber
+        mobileNumber,
       };
 
       const response = await signupuser(data);
-
-      console.log("Signup successful:", response);
-
       alert(response.data.message);
-
       navigate("/login");
-
     } catch (error) {
-      console.error("Signup failed:", error);
-
-      alert(
-        error.response?.data?.message ||
-        "Signup failed"
+      setErrorMessage(
+        getApiErrorMessage(
+          error,
+          "Signup failed. Please check the information.",
+        ),
       );
+    } finally {
+      setSubmitting(false);
     }
   };
 
   return (
     <div className="auth-page">
       <div className="auth-card">
-
         <h1>Create Account</h1>
 
-        <p className="subtitle">
-          Sign up to get started
-        </p>
+        <p className="subtitle">Create a student account to get started</p>
+
+        {errorMessage && <p role="alert">{errorMessage}</p>}
 
         <form onSubmit={handleSubmit}>
-
           <div className="input-group">
             <label>Name</label>
 
@@ -111,20 +109,6 @@ function Signup() {
             />
           </div>
 
-          {/* ROLE */}
-          <div className="input-group">
-            <label>Register As</label>
-
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value)}
-              required
-            >
-              <option value="Student">Student</option>
-              <option value="Lecturer">Lecturer</option>
-            </select>
-          </div>
-
           <div className="input-group">
             <label>Password</label>
 
@@ -149,19 +133,14 @@ function Signup() {
             />
           </div>
 
-          <button type="submit">
-            Sign Up
+          <button type="submit" disabled={submitting}>
+            {submitting ? "Creating account…" : "Sign Up"}
           </button>
-
         </form>
 
         <p className="bottom-text">
-          Already have an account?{" "}
-          <Link to="/login">
-            Login
-          </Link>
+          Already have an account? <Link to="/login">Login</Link>
         </p>
-
       </div>
     </div>
   );

@@ -1,33 +1,24 @@
 const AppError = require("./AppError");
 
 const validate = (schema) => {
+  return (req, res, next) => {
+    const { error, value } = schema.validate(req.body, {
+      abortEarly: false,
+      stripUnknown: true,
+      convert: true,
+    });
 
-    return (req, res, next) => {
+    if (error) {
+      const messages = error.details.map((detail) => detail.message);
 
-        const { error } = schema.validate(
-            req.body,
-            {
-                abortEarly: false,
-                stripUnknown: true
-            }
-        );
+      return next(new AppError(messages.join(", "), 400));
+    }
 
-        if (error) {
+    // Pass only the validated and sanitized data to the controller.
+    req.body = value;
 
-            const errors = error.details.map(
-                err => err.message
-            );
-
-            return next(
-                new AppError(
-                    errors.join(", "),
-                    400
-                )
-            );
-        }
-
-        next();
-    };
+    return next();
+  };
 };
 
 module.exports = validate;
