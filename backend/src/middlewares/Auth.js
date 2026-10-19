@@ -61,13 +61,31 @@ const Auth = async (req, res, next) => {
 
     try {
         // Read current role/status from MongoDB so old JWT claims cannot retain access.
-        const user = await User.findById(userId).select("role status").lean();
+        const user = await User.findById(userId)
+    .select("role status tokenVersion")
+    .lean();
         if (!user) {
             return next(new AppError("Session is no longer valid. Please log in again.", 401));
         }
         if (user.status !== "ACTIVE") {
             return next(new AppError("This account is not active.", 403));
         }
+
+        const currentTokenVersion = Number.isInteger(user.tokenVersion)
+    ? user.tokenVersion
+    : 0;
+
+if (
+    !Number.isInteger(verifiedToken.tokenVersion) ||
+    verifiedToken.tokenVersion !== currentTokenVersion
+) {
+    return next(
+        new AppError(
+            "Session has expired or been revoked. Please log in again.",
+            401
+        )
+    );
+}
 
         req.user = {
             ...verifiedToken,

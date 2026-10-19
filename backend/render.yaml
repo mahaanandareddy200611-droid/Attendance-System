@@ -1,0 +1,31 @@
+services:
+  - type: web
+    name: attendance-backend
+    runtime: node
+    rootDir: backend
+    buildCommand: npm ci
+    startCommand: npm start
+    healthCheckPath: /api/v1/readyz
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: JWT_SECRET
+        generateValue: true
+      - key: MONGO_URL
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: MAIL_USER
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: BIOMETRIC_BASE_URL
+        sync: false
+      - key: BIOMETRIC_API_KEY
+        sync: false
+      - key: BIOMETRIC_COLLECTION_ID
+        value: students
+      - key: BIOMETRIC_MATCH_THRESHOLD
+        value: "0.4"

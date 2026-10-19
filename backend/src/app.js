@@ -15,8 +15,30 @@ const AttendanceRoutes = require("./modules/Attendance/AttendanceRouter");
 const AuthRoutes = require("./modules/Auth/AuthRouter");
 
 const app = express();
+app.disable("x-powered-by");
 
-app.disable("x-powered-by"); // to hide it was by this express framw work or some other
+/*
+ * Assign an ID before middleware that may reject a request.
+ * This ensures even CORS and body-parser errors are traceable.
+ */
+app.use((req, res, next) => {
+    const incomingRequestId = req.get("X-Request-ID");
+
+    if (
+        incomingRequestId &&
+        typeof incomingRequestId === "string" &&
+        incomingRequestId.length <= 128 &&
+        /^[\w.-]+$/.test(incomingRequestId)
+    ) {
+        req.id = incomingRequestId;
+    } else {
+        req.id = crypto.randomUUID();
+    }
+
+    res.setHeader("X-Request-ID", req.id);
+
+    next();
+});
 
 /*
 |--------------------------------------------------------------------------
@@ -235,31 +257,62 @@ app.use((req, res) => {
  *
  * We don't send internal stack traces to clients.
  */
+
 app.use((err, req, res, next) => {
-  if (res.headersSent) {
-    return next(err);
-  }
+    if (res.headersSent) {
+        return next(err);
+    }
 
-  console.error({
-    requestId: req.id,
-    error: err,
-  });
+    const statusCode =
+        Number(err.statusCode || err.status) ||
+        (
+            err.type === "entity.too.large" ||
+            err.code === "LIMIT_FILE_SIZE"
+                ? 413
+                : 500
+        );
 
-  const statusCode =
-    Number(err.statusCode || err.status) ||
-    (err.type === "entity.too.large" || err.code === "LIMIT_FILE_SIZE" ? 413 : 500);
-
-  return res.status(statusCode).json({
-    success: false,
-    error: {
-      code:
+    const errorCode =
         err.providerCode ||
-        (statusCode === 500 ? "INTERNAL_SERVER_ERROR" : "REQUEST_FAILED"),
-      message:
-        statusCode === 500 ? "An unexpected error occurred" : err.message,
-    },
-    requestId: req.id,
-  });
+        (
+            statusCode === 500
+                ? "INTERNAL_SERVER_ERROR"
+                : "REQUEST_FAILED"
+        );
+
+    const logEntry = {
+        requestId: req.id,
+        method: req.method,
+        path: req.originalUrl,
+        statusCode,
+        code: errorCode
+    };
+
+    if (statusCode >= 500) {
+        // Server errors need diagnostic details in protected server logs.
+        console.error({
+            ...logEntry,
+            message: err.message,
+            stack: err.stack
+        });
+    } else {
+        // Client errors are expected operational outcomes.
+        // Do not dump complete stacks for rejected CORS or validation requests.
+        console.warn(logEntry);
+    }
+
+    return res.status(statusCode).json({
+        success: false,
+        error: {
+            code: errorCode,
+            message:
+                statusCode >= 500
+                    ? "An unexpected error occurred"
+                    : err.message
+        },
+        requestId: req.id
+    });
 });
+
 
 module.exports = app;

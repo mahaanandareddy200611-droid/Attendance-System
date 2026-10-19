@@ -64,14 +64,17 @@ exports.Login = async (email, password) => {
 
   const token = jwt.sign(
     {
-      id: user._id,
-      role: user.role,
+        id: user._id,
+        role: user.role,
+        tokenVersion: Number.isInteger(user.tokenVersion)
+            ? user.tokenVersion
+            : 0
     },
     process.env.JWT_SECRET,
     {
-      expiresIn: process.env.JWT_EXPIRES_IN || "1d",
-    },
-  );
+        expiresIn: process.env.JWT_EXPIRES_IN || "1d"
+    }
+);
 
   return {
     user,
@@ -83,8 +86,10 @@ exports.forgotPassword = async (email) => {
   const user = await User.findOne({ email });
 
   if (!user) {
-    throw new AppError("Email not found", 404);
-  }
+    // The controller returns the same public response whether
+    // or not this email belongs to an account.
+    return { sent: true };
+}
 
   const otp = crypto.randomInt(100000, 1000000).toString();
 
@@ -130,101 +135,157 @@ exports.forgotPassword = async (email) => {
 };
 
 exports.verifyResetOTP = async (otp, email) => {
-  if (!otp) {
-    throw new AppError("OTP is required", 400);
-  }
+    const normalizedEmail = String(email || "").trim().toLowerCase();
 
-  if (!email) {
-    throw new AppError("Email is required", 400);
-  }
+    if (!/^\d{6}$/.test(String(otp || "")) || !normalizedEmail) {
+        throw new AppError("Invalid or expired OTP", 400);
+    }
 
-  const user = await User.findOne({ email }).select(
-    "+passwordResetOtpHash " +
-      "+passwordResetOtpExpires " +
-      "+passwordResetOtpAttempts",
-  );
+    const now = new Date();
 
-  if (!user) {
-    throw new AppError("Email not found", 404);
-  }
+    const user = await User.findOne({
+        email: normalizedEmail
+    }).select(
+        "+passwordResetOtpHash " +
+        "+passwordResetOtpExpires " +
+        "+passwordResetOtpAttempts"
+    );
 
-  if (!user.passwordResetOtpHash) {
-    throw new AppError("No OTP request found", 400);
-  }
+    if (
+        !user ||
+        !user.passwordResetOtpHash ||
+        !user.passwordResetOtpExpires ||
+        user.passwordResetOtpExpires.getTime() <= now.getTime()
+    ) {
+        throw new AppError("Invalid or expired OTP", 400);
+    }
 
-  if (user.passwordResetOtpAttempts >= 5) {
-    throw new AppError("Too many incorrect OTP attempts", 429);
-  }
+    if (user.passwordResetOtpAttempts >= 5) {
+        throw new AppError("Too many incorrect OTP attempts", 429);
+    }
 
-  if (
-    !user.passwordResetOtpExpires ||
-    user.passwordResetOtpExpires.getTime() <= Date.now()
-  ) {
-    throw new AppError("OTP expired", 400);
-  }
+    const suppliedHash = crypto
+        .createHash("sha256")
+        .update(String(otp))
+        .digest();
 
-  const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
+    const storedHash = Buffer.from(
+        user.passwordResetOtpHash,
+        "hex"
+    );
 
-  const isMatch = otpHash === user.passwordResetOtpHash;
+    const matches =
+        storedHash.length === suppliedHash.length &&
+        crypto.timingSafeEqual(storedHash, suppliedHash);
 
-  if (!isMatch) {
-    user.passwordResetOtpAttempts += 1;
+    if (!matches) {
+        // The condition and increment execute atomically in MongoDB.
+        // Concurrent attempts cannot all overwrite the same counter.
+        const attemptUpdate = await User.updateOne(
+            {
+                _id: user._id,
+                passwordResetOtpHash: user.passwordResetOtpHash,
+                passwordResetOtpExpires: { $gt: now },
+                passwordResetOtpAttempts: { $lt: 5 }
+            },
+            {
+                $inc: { passwordResetOtpAttempts: 1 }
+            }
+        );
 
-    await user.save();
+        if (attemptUpdate.matchedCount !== 1) {
+            throw new AppError("Invalid or expired OTP", 400);
+        }
 
-    throw new AppError("Incorrect OTP", 400);
-  }
+        throw new AppError("Incorrect OTP", 400);
+    }
 
-  user.passwordResetVerifiedUntil = new Date(Date.now() + 10 * 60 * 1000);
+    // Consume the OTP atomically. Only one concurrent correct request
+    // can match the original hash and successfully create the verified window.
+    const verifiedUntil = new Date(
+        now.getTime() + 10 * 60 * 1000
+    );
 
-  user.passwordResetOtpHash = null;
-  user.passwordResetOtpExpires = null;
-  user.passwordResetOtpAttempts = 0;
+    const verificationUpdate = await User.updateOne(
+        {
+            _id: user._id,
+            passwordResetOtpHash: user.passwordResetOtpHash,
+            passwordResetOtpExpires: { $gt: now },
+            passwordResetOtpAttempts: { $lt: 5 }
+        },
+        {
+            $set: {
+                passwordResetVerifiedUntil: verifiedUntil,
+                passwordResetOtpHash: null,
+                passwordResetOtpExpires: null,
+                passwordResetOtpAttempts: 0
+            }
+        }
+    );
 
-  await user.save();
+    if (verificationUpdate.matchedCount !== 1) {
+        throw new AppError("Invalid or expired OTP", 400);
+    }
 
-  return {
-    verified: true,
-  };
+    return { verified: true };
 };
 
 exports.password = async (password, email) => {
-  if (!password) {
-    throw new AppError("Password is required", 400);
-  }
+    const normalizedEmail = String(email || "").trim().toLowerCase();
 
-  if (!email) {
-    throw new AppError("Email is required", 400);
-  }
+    if (!password || !normalizedEmail) {
+        throw new AppError(
+            "Password-reset authorization is invalid or expired",
+            400
+        );
+    }
 
-  const user = await User.findOne({ email }).select(
-    "+passwordResetVerifiedUntil",
-  );
+    const now = new Date();
 
-  if (!user) {
-    throw new AppError("Email not found", 404);
-  }
+    const user = await User.findOne({
+        email: normalizedEmail
+    }).select("+passwordResetVerifiedUntil");
 
-  if (
-    !user.passwordResetVerifiedUntil ||
-    user.passwordResetVerifiedUntil.getTime() <= Date.now()
-  ) {
-    throw new AppError("OTP verification required or expired", 400);
-  }
+    if (
+        !user ||
+        !user.passwordResetVerifiedUntil ||
+        user.passwordResetVerifiedUntil.getTime() <= now.getTime()
+    ) {
+        throw new AppError(
+            "Password-reset authorization is invalid or expired",
+            400
+        );
+    }
 
-  const hashedPassword = await bcrypt.hash(password, 12);
+    const hashedPassword = await bcrypt.hash(password, 12);
 
-  user.password = hashedPassword;
+    // The unexpired window is part of the database predicate.
+    // The first successful update clears it; a racing update cannot reuse it.
+    const result = await User.updateOne(
+        {
+            _id: user._id,
+            passwordResetVerifiedUntil: { $gt: now }
+        },
+        {
+    $set: {
+        password: hashedPassword,
+        passwordResetVerifiedUntil: null
+    },
+    $inc: {
+        tokenVersion: 1
+    }
+}
+    );
 
-  user.passwordResetVerifiedUntil = null;
+    if (result.matchedCount !== 1) {
+        throw new AppError(
+            "Password-reset authorization is invalid or expired",
+            400
+        );
+    }
 
-  await user.save();
-
-  return {
-    updated: true,
-  };
+    return { updated: true };
 };
-
 exports.GetCurrentUser = async (userId) => {
   if (!userId) {
     throw new AppError("Authentication required", 401);
