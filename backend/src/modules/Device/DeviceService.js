@@ -27,7 +27,7 @@ exports.revokeMyDevice = async ({ userId }) => {
     const device = await DeviceCredential.findOneAndUpdate(
         { userId, status: "ACTIVE" },
         { $set: { status: "REVOKED", revokedAt: new Date() } },
-        { new: true }
+        { returnDocument: "after" }
     ).select("deviceId status revokedAt");
     return device || null;
 };

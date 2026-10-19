@@ -65,6 +65,12 @@ const AuthSchema = new mongoose.Schema(
             index: true
         },
 
+        tokenVersion: {
+    type: Number,
+    default: 0,
+    min: 0
+},
+
         passwordResetOtpHash: {
             type: String,
             default: null,

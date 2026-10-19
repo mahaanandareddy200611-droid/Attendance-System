@@ -1,5 +1,6 @@
-const AttendanceRecord =
-    require("../../models/AttendanceRecord.model");
+
+const AttendanceRecord = require("../../models/AttendanceRecord.model");
+const AppError = require("../../utils/AppError");
 
 const createOrGetAttendanceRecord = async ({
     sessionId,
@@ -7,71 +8,62 @@ const createOrGetAttendanceRecord = async ({
     courseCode,
     section,
     verification,
-    gps
+    gps,
+    dbSession
 }) => {
-
-    try {
-
-        const result =
-            await AttendanceRecord.findOneAndUpdate(
-                {
-                    sessionId,
-                    studentId
-                },
-                {
-                    $setOnInsert: {
-                        sessionId,
-                        studentId,
-                        courseCode,
-                        section,
-                        markedAt: new Date(),
-                        verification,
-                        gps
-                    }
-                },
-                {
-                    upsert: true,
-                    returnDocument: "after",
-                    includeResultMetadata: true,
-                    setDefaultsOnInsert: true
-                }
-            );
-
-        return {
-            record: result.value,
-            created:
-                result.lastErrorObject?.updatedExisting === false
-        };
-
-    } catch (error) {
-
-        /*
-         * Race protection:
-         *
-         * Request A and Request B may arrive
-         * at almost exactly the same time.
-         *
-         * The unique index:
-         * { sessionId, studentId }
-         *
-         * guarantees only one record can exist.
-         */
-        if (error.code === 11000) {
-
-            const existingRecord =
-                await AttendanceRecord.findOne({
-                    sessionId,
-                    studentId
-                });
-
-            return {
-                record: existingRecord,
-                created: false
-            };
-        }
-
-        throw error;
+    // Attendance records must be written inside the transaction
+    // that updates the roster, attempt log, and audit log.
+    if (
+        !dbSession ||
+        typeof dbSession.withTransaction !== "function"
+    ) {
+        throw new AppError(
+            "A MongoDB transaction session is required to write attendance",
+            500
+        );
     }
+
+    const result = await AttendanceRecord.findOneAndUpdate(
+        {
+            sessionId,
+            studentId
+        },
+        {
+            $setOnInsert: {
+                sessionId,
+                studentId,
+                courseCode,
+                section,
+                markedAt: new Date(),
+                verification,
+                gps
+            }
+        },
+        {
+            upsert: true,
+            returnDocument: "after",
+            includeResultMetadata: true,
+            setDefaultsOnInsert: true,
+
+            // CRITICAL: participate in the caller's transaction.
+            session: dbSession
+        }
+    );
+
+    const record = result?.value;
+
+    if (!record) {
+        throw new AppError(
+            "Attendance record could not be created or retrieved",
+            500
+        );
+    }
+
+    return {
+        record,
+        created:
+            result.lastErrorObject?.updatedExisting === false
+    };
 };
 
 module.exports = {

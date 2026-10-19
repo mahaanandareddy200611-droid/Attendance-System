@@ -3,6 +3,7 @@ const crypto = require("crypto");
 const mongoose =
     require("mongoose");
 
+
 const ClassSection =
     require("../../models/ClassSection.model");
 
@@ -24,10 +25,10 @@ const {
 } = require("./AttendanceRecordService");
 
 const {
-    consumeAssertion:
-        consumeBiometricAssertion,
-    validateAssertion:
-        validateBiometricAssertion
+    validateAssertion: validateBiometricAssertion,
+    reserveAssertion,
+    releaseAssertionReservation,
+    finalizeAssertionReservation
 } = require("../Biometric/BiometricService");
 
 const {
@@ -45,11 +46,7 @@ const {
 const AttendanceAttempt =
     require("../../models/AttendanceAttempt.model");
 
-const {
-    claimIdempotency,
-    completeIdempotency,
-    releaseIdempotency
-} = require("./IdempotencyService");
+
 
 const AuditEvent =
     require("../../models/AuditEvent.model");
@@ -69,6 +66,12 @@ const {
 } = require(
     "../../socket/socket"
 );
+const {
+    getIdempotencyResult,
+    claimIdempotency,
+    completeIdempotency,
+    releaseIdempotency
+} = require("./IdempotencyService");
 
 
 
@@ -588,7 +591,7 @@ exports.endSession = async ({
                                 }
                             },
                             {
-                                new: true,
+                                returnDocument: "after",
                                 session:
                                     dbSession
                             }
@@ -793,6 +796,48 @@ exports.verifyAttendance = async ({
             404
         );
     }
+
+
+
+
+
+    // Build a fingerprint of the complete attendance request.
+    const idempotencyRequest = {
+        key: idempotencyKey,
+        studentId,
+        sessionId: session._id,
+        token,
+        deviceId,
+        deviceSignature,
+        biometricAssertionId,
+        latitude,
+        longitude,
+        accuracyMeters,
+        capturedAt
+    };
+
+    // A completed retry must be handled before checking whether
+    // the QR expired, the session ended, or the roster says PRESENT.
+    const previousResult = await getIdempotencyResult(
+        idempotencyRequest
+    );
+
+    if (previousResult?.replayed) {
+        return {
+            replayed: true,
+            status: previousResult.responseStatus,
+            body: previousResult.responseBody
+        };
+    }
+
+    // Only new or reclaimable requests need a fresh QR slot.
+    if (!isSlotFresh(slot)) {
+        throw new AppError(
+            "Attendance QR has expired",
+            401
+        );
+    }
+
 
 
     /*
@@ -1053,13 +1098,9 @@ exports.verifyAttendance = async ({
     --------------------------------------------------
     */
 
-    const idempotencyResult = await claimIdempotency({
-        key: idempotencyKey,
-        studentId,
-        sessionId: session._id,
-        token,
-        deviceId
-    });
+    const idempotencyResult = await claimIdempotency(
+        idempotencyRequest
+    );
 
     if (idempotencyResult.replayed) {
         return {
@@ -1071,16 +1112,42 @@ exports.verifyAttendance = async ({
 
     const { ownerToken } = idempotencyResult;
 
+    const assertionReservation = {
+        assertionId: biometricAssertionId,
+        userId: studentId,
+        sessionId: session.sessionId,
+        reservationId: idempotencyKey
+    };
+
+    const releaseReservedAssertion = async () => {
+        try {
+            await releaseAssertionReservation(
+                assertionReservation
+            );
+        } catch (error) {
+            console.error(
+                "Failed to release biometric assertion reservation:",
+                error
+            );
+        }
+    };
+
     try {
-        await consumeBiometricAssertion({
-            assertionId: biometricAssertionId,
-            userId: studentId,
-            sessionId: session.sessionId
-        });
+        await reserveAssertion(assertionReservation);
     } catch (error) {
-        await releaseIdempotency({ key: idempotencyKey, ownerToken });
+        await releaseIdempotency({
+            key: idempotencyKey,
+            ownerToken
+        }).catch((cleanupError) => {
+            console.error(
+                "Failed to release idempotency claim:",
+                cleanupError
+            );
+        });
+
         throw error;
     }
+
 
     /*
     --------------------------------------------------
@@ -1103,6 +1170,7 @@ exports.verifyAttendance = async ({
                 tokenResult.payload.nonce
         });
     } catch (error) {
+        await releaseReservedAssertion();
         await releaseIdempotency({ key: idempotencyKey, ownerToken });
         throw error;
     }
@@ -1131,6 +1199,8 @@ exports.verifyAttendance = async ({
                     "This attendance QR has already been used"
             }
         };
+
+        await releaseReservedAssertion();
 
         await completeIdempotency({
             key:
@@ -1183,6 +1253,8 @@ exports.verifyAttendance = async ({
         };
 
 
+        await releaseReservedAssertion();
+
         await completeIdempotency({
             key:
                 idempotencyKey,
@@ -1233,6 +1305,8 @@ exports.verifyAttendance = async ({
     let attendanceCreated =
         false;
 
+    let attendanceResponse;
+    let attendanceResponseStatus;
 
     try {
 
@@ -1246,44 +1320,44 @@ exports.verifyAttendance = async ({
                 */
 
                 const attendanceResult =
-    await createOrGetAttendanceRecord({
-        sessionId:
-            session._id,
+                    await createOrGetAttendanceRecord({
+                        sessionId:
+                            session._id,
 
-        studentId,
+                        studentId,
 
-        courseCode:
-            session.courseCode,
+                        courseCode:
+                            session.courseCode,
 
-        section:
-            session.section,
+                        section:
+                            session.section,
 
-        verification: {
-            qr: true,
-            device: true,
-            proximity: false,
-            biometric: true
-        },
+                        verification: {
+                            qr: true,
+                            device: true,
+                            proximity: false,
+                            biometric: true
+                        },
 
-        gps: {
-            latitude:
-                studentLatitude,
+                        gps: {
+                            latitude:
+                                studentLatitude,
 
-            longitude:
-                studentLongitude,
+                            longitude:
+                                studentLongitude,
 
-            accuracyMeters:
-                studentAccuracy,
+                            accuracyMeters:
+                                studentAccuracy,
 
-            capturedAt:
-                gpsCapturedAt,
+                            capturedAt:
+                                gpsCapturedAt,
 
-            distanceFromClassroomMeters:
-                distance
-        },
+                            distanceFromClassroomMeters:
+                                distance
+                        },
 
-        dbSession
-    });
+                        dbSession
+                    });
 
 
                 attendanceRecord =
@@ -1322,12 +1396,9 @@ exports.verifyAttendance = async ({
                                 }
                             },
                             {
-                                new:
-                                    true,
-
-                                session:
-                                    dbSession
-                            }
+    returnDocument: "after",
+    session: dbSession
+}
                         );
 
 
@@ -1410,11 +1481,37 @@ exports.verifyAttendance = async ({
                             dbSession
                     }
                 );
+
+                attendanceResponse = attendanceCreated
+                    ? {
+                        success: true,
+                        message: "Attendance marked successfully",
+                        attendanceId: attendanceRecord._id,
+                        alreadyMarked: false
+                    }
+                    : {
+                        success: true,
+                        message: "Attendance already marked",
+                        attendanceId: attendanceRecord._id,
+                        alreadyMarked: true
+                    };
+
+                attendanceResponseStatus = attendanceCreated ? 201 : 200;
+
+                await completeIdempotency({
+                    key: idempotencyKey,
+                    ownerToken,
+                    responseStatus: attendanceResponseStatus,
+                    responseBody: attendanceResponse,
+                    dbSession
+                });
             }
         );
 
 
     } catch (error) {
+
+        await releaseReservedAssertion();
 
         /*
         --------------------------------------------------
@@ -1441,7 +1538,15 @@ exports.verifyAttendance = async ({
             }
         );
 
-        await releaseIdempotency({ key: idempotencyKey, ownerToken });
+        await releaseIdempotency({
+            key: idempotencyKey,
+            ownerToken
+        }).catch((cleanupError) => {
+            console.error(
+                "Failed to release idempotency claim after transaction failure:",
+                cleanupError
+            );
+        });
 
         throw error;
 
@@ -1453,129 +1558,53 @@ exports.verifyAttendance = async ({
 
 
     /*
-    --------------------------------------------------
-    12. COMPLETE IDEMPOTENCY RESPONSE
-    --------------------------------------------------
-    */
+     * The MongoDB transaction has committed at this point.
+     * Do not undo committed attendance if Redis cleanup fails.
+     */
 
-    if (!attendanceCreated) {
-
-        const response = {
-            success:
-                true,
-
-            message:
-                "Attendance already marked",
-
-            attendanceId:
-                attendanceRecord._id,
-
-            alreadyMarked:
-                true
-        };
-
-
-        await completeIdempotency({
-            key:
-                idempotencyKey,
-
-            ownerToken,
-
-            responseStatus:
-                200,
-
-            responseBody:
-                response
+    // Consume the biometric assertion after the successful commit.
+    try {
+        const finalized = await finalizeAssertionReservation({
+            assertionId: biometricAssertionId,
+            reservationId: idempotencyKey
         });
 
-
-        await completeQrUse({
-            key:
-                qrUse.key,
-
-            ownerToken:
-                qrUse.ownerToken
-        });
-
-
-        return response;
+        if (!finalized) {
+            console.error(
+                "Attendance committed, but biometric assertion finalization was not confirmed",
+                { idempotencyKey }
+            );
+        }
+    } catch (error) {
+        console.error(
+            "Attendance committed, but biometric assertion cleanup failed:",
+            error
+        );
     }
 
+    // The QR claim is also external to MongoDB. Fail closed if cleanup fails,
+    // while preserving the committed response for an idempotent retry.
+    try {
+        await completeQrUse({
+            key: qrUse.key,
+            ownerToken: qrUse.ownerToken
+        });
+    } catch (error) {
+        console.error(
+            "Attendance committed, but QR claim finalization failed:",
+            error
+        );
+    }
 
-    /*
-    --------------------------------------------------
-    13. SUCCESS RESPONSE
-    --------------------------------------------------
-    */
+    if (attendanceCreated) {
+        emitAttendanceMarked({
+            sessionId: session.sessionId,
+            attendanceId: String(attendanceRecord._id),
+            rollNumber: rosterEntry.rollNumber,
+            markedAt: attendanceRecord.markedAt,
+            alreadyMarked: false
+        });
+    }
 
-    const response = {
-        success:
-            true,
-
-        message:
-            "Attendance marked successfully",
-
-        attendanceId:
-            attendanceRecord._id,
-
-        alreadyMarked:
-            false
-    };
-
-
-    /*
-    --------------------------------------------------
-    14. COMPLETE IDEMPOTENCY RESPONSE
-    --------------------------------------------------
-    */
-
-    await completeIdempotency({
-        key:
-            idempotencyKey,
-
-        ownerToken,
-
-        responseStatus:
-            201,
-
-        responseBody:
-            response
-    });
-
-
-    /*
-    --------------------------------------------------
-    15. COMPLETE QR CLAIM
-    --------------------------------------------------
-    */
-
-    await completeQrUse({
-        key:
-            qrUse.key,
-
-        ownerToken:
-            qrUse.ownerToken
-    });
-
-    emitAttendanceMarked({
-    sessionId:
-        session.sessionId,
-
-    attendanceId:
-        String(
-            attendanceRecord._id
-        ),
-
-    rollNumber:
-        rosterEntry.rollNumber,
-
-    markedAt:
-        attendanceRecord.markedAt,
-
-    alreadyMarked:
-        false
-});
-
-
-    return response;
+    return attendanceResponse;
 };
