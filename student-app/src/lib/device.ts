@@ -70,6 +70,16 @@ export async function removeNativeDeviceKey(userId: string) {
   ]);
 }
 
+export async function hasNativeDeviceKey(userId: string) {
+  const deviceId = await SecureStore.getItemAsync(DEVICE_ID_PREFIX + userId);
+  const seed = await loadSeed(userId);
+  return Boolean(deviceId && seed?.length === 32);
+}
+
+export async function getStoredNativeDeviceId(userId: string) {
+  return SecureStore.getItemAsync(DEVICE_ID_PREFIX + userId);
+}
+
 export async function getOrRegisterNativeDevice(userId: string, token: string) {
   const existingId = await SecureStore.getItemAsync(DEVICE_ID_PREFIX + userId);
   const existingSeed = await loadSeed(userId);
