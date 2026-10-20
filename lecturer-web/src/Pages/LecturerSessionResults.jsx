@@ -147,13 +147,14 @@ export default function LecturerSessionResults() {
 
   const submitEvidence = async (event) => {
     event.preventDefault();
+    const formElement = event.currentTarget;
     if (!evidenceFile) return;
     setEvidenceBusy(true);
     setEvidenceNotice("");
     try {
       await uploadSessionEvidence(sessionId, evidenceFile);
       setEvidenceFile(null);
-      event.currentTarget.reset();
+      formElement.reset();
       await loadEvidence();
       setEvidenceNotice("Evidence uploaded to private storage.");
     } catch (requestError) {
