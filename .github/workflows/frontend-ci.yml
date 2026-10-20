@@ -1,0 +1,61 @@
+name: Frontend CI
+
+on:
+  push:
+    paths:
+      - "lecturer-web/**"
+      - "student-app/**"
+      - ".github/workflows/frontend-ci.yml"
+  pull_request:
+    paths:
+      - "lecturer-web/**"
+      - "student-app/**"
+      - ".github/workflows/frontend-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: frontend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lecturer-web:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: lecturer-web/package-lock.json
+      - name: Install dependencies
+        working-directory: lecturer-web
+        run: npm ci
+      - name: Build production web client
+        working-directory: lecturer-web
+        run: npm run build
+      - name: Lint web client
+        working-directory: lecturer-web
+        run: npm run lint
+
+  student-app:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: student-app/package-lock.json
+      - name: Install dependencies
+        working-directory: student-app
+        run: npm ci
+      - name: Export Expo web bundle
+        working-directory: student-app
+        run: npx expo export --platform web
