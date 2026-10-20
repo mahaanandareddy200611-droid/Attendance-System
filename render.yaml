@@ -7,10 +7,14 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /api/v1/readyz
-    autoDeployTrigger: commit
+    autoDeployTrigger: checksPass
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ATTENDANCE_RELEASE_CHANNEL
+        value: staging
+      - key: TRUST_PROXY_HOPS
+        value: "1"
       - key: PORT
         value: "10000"
       - key: JWT_SECRET
