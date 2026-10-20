@@ -9,8 +9,18 @@ services:
     envVars:
       - key: NODE_ENV
         value: production
+      - key: ATTENDANCE_RELEASE_CHANNEL
+        value: staging
       - key: JWT_SECRET
         generateValue: true
+      - key: ATTENDANCE_TOKEN_SECRET
+        generateValue: true
+      - key: TRUST_PROXY_HOPS
+        value: "1"
+      - key: SESSION_EXPIRY_SWEEP_MS
+        value: "15000"
+      - key: BIOMETRIC_PRODUCTION_APPROVED
+        sync: false
       - key: MONGO_URL
         sync: false
       - key: REDIS_URL

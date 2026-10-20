@@ -1,3 +1,4 @@
+const { buildAttendanceSignaturePayload } = require("../../src/modules/Device/attendanceSignaturePayload");
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -597,6 +598,8 @@ if (!mongoUrl || !testRedisUrl) {
                 biometricChallenge.challengeId
             );
 
+            imageForm.append("challenge", biometricChallenge.challenge);
+
             imageForm.append(
                 "image",
                 new Blob([imageBuffer], { type: "image/jpeg" }),
@@ -622,12 +625,18 @@ if (!mongoUrl || !testRedisUrl) {
             assert.ok(assertionId);
 
             // 7. Sign the attendance operation with the registered device.
-            const deviceMessage = [
-                "ATTENDANCE_V1",
-                publicSessionId,
+            const capturedAt = new Date().toISOString();
+            const deviceMessage = buildAttendanceSignaturePayload({
+                deviceId,
+                sessionId: publicSessionId,
                 token,
-                idempotencyKey
-            ].join("|");
+                idempotencyKey,
+                biometricAssertionId: assertionId,
+                latitude: room.latitude,
+                longitude: room.longitude,
+                accuracyMeters: 5,
+                capturedAt
+            });
 
             const deviceSignature = crypto.sign(
                 null,
@@ -635,7 +644,6 @@ if (!mongoUrl || !testRedisUrl) {
                 keyPair.privateKey
             ).toString("base64url");
 
-            const capturedAt = new Date().toISOString();
 
             const attendancePayload = {
                 token,
@@ -653,12 +661,17 @@ if (!mongoUrl || !testRedisUrl) {
 
             const gpsAttackSignature = crypto.sign(
                 null,
-                Buffer.from([
-                    "ATTENDANCE_V1",
-                    publicSessionId,
+                Buffer.from(buildAttendanceSignaturePayload({
+                    deviceId,
+                    sessionId: publicSessionId,
                     token,
-                    gpsAttackKey
-                ].join("|"), "utf8"),
+                    idempotencyKey: gpsAttackKey,
+                    biometricAssertionId: attendancePayload.biometricAssertionId,
+                    latitude: attendancePayload.latitude,
+                    longitude: attendancePayload.longitude,
+                    accuracyMeters: attendancePayload.accuracyMeters,
+                    capturedAt: attendancePayload.capturedAt
+                }), "utf8"),
                 keyPair.privateKey
             ).toString("base64url");
 
@@ -675,14 +688,14 @@ if (!mongoUrl || !testRedisUrl) {
                         deviceSignature: gpsAttackSignature,
                         latitude: 0,
                         longitude: 0,
-                        capturedAt: new Date().toISOString()
+                        capturedAt
                     }
                 }
             );
 
             assert.equal(
                 gpsAttackResponse.response.status,
-                403,
+                401,
                 JSON.stringify(gpsAttackResponse.data)
             );
 
@@ -809,12 +822,17 @@ if (!mongoUrl || !testRedisUrl) {
 
             const secondDeviceSignature = crypto.sign(
                 null,
-                Buffer.from([
-                    "ATTENDANCE_V1",
-                    publicSessionId,
+                Buffer.from(buildAttendanceSignaturePayload({
+                    deviceId,
+                    sessionId: publicSessionId,
                     token,
-                    secondOperationKey
-                ].join("|"), "utf8"),
+                    idempotencyKey: secondOperationKey,
+                    biometricAssertionId: attendancePayload.biometricAssertionId,
+                    latitude: attendancePayload.latitude,
+                    longitude: attendancePayload.longitude,
+                    accuracyMeters: attendancePayload.accuracyMeters,
+                    capturedAt: attendancePayload.capturedAt
+                }), "utf8"),
                 keyPair.privateKey
             ).toString("base64url");
 

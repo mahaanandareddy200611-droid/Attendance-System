@@ -67,6 +67,14 @@ const ClassSectionSchema = new mongoose.Schema(
             }
         ],
 
+        // Incremented by both room-location updates and attendance-session creation.
+        // The shared write serializes snapshot changes under MongoDB transactions.
+        locationVersion: {
+            type: Number,
+            required: true,
+            default: 0,
+            min: 0
+        },
         status: {
             type: String,
             enum: ["ACTIVE", "INACTIVE"],

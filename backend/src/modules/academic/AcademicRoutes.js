@@ -16,13 +16,15 @@ const {
     getSectionStudents,
     listCourses,
     listSections,
-    searchUsers
+    searchUsers,
+    updateSectionLocation
 } = require("./AcademicController");
 
 const {
     createCourse: createCourseSchema,
     createSection: createSectionSchema,
-    enrollStudent: enrollStudentSchema
+    enrollStudent: enrollStudentSchema,
+    updateSectionLocation: updateSectionLocationSchema
 } = require("./AcademicValidator");
 
 const router = express.Router();
@@ -86,4 +88,11 @@ router.get(
     getSectionStudents
 );
 
+router.patch(
+    "/sections/:sectionId/location",
+    Auth,
+    authorize("Admin"),
+    validate(updateSectionLocationSchema),
+    updateSectionLocation
+);
 module.exports = router;

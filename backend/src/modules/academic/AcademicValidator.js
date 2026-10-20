@@ -102,3 +102,9 @@ exports.enrollStudent = Joi.object({
         .max(30)
         .required()
 });
+// Update the saved coordinates for an existing section's room.
+// The geofence radius is intentionally preserved by this endpoint.
+exports.updateSectionLocation = Joi.object({
+    latitude: Joi.number().min(-90).max(90).required(),
+    longitude: Joi.number().min(-180).max(180).required()
+}).required().unknown(false);

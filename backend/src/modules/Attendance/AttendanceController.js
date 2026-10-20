@@ -161,7 +161,7 @@ exports.verifyAttendance =
 } = req.body;
 
         const idempotencyKey =
-            req.get("Idempotency-Key");
+            req.idempotencyKey || req.get("Idempotency-Key");
 
     const result =
         await attendanceService.verifyAttendance({

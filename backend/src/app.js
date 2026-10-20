@@ -17,6 +17,17 @@ const AuthRoutes = require("./modules/Auth/AuthRouter");
 const app = express();
 app.disable("x-powered-by");
 
+// Configure only the known number of trusted reverse-proxy hops. Leave this
+// unset for direct local development; set it to 1 behind Render's proxy.
+const trustProxyHopsRaw = process.env.TRUST_PROXY_HOPS;
+if (trustProxyHopsRaw !== undefined && trustProxyHopsRaw !== "") {
+  const trustProxyHops = Number(trustProxyHopsRaw);
+  if (!Number.isInteger(trustProxyHops) || trustProxyHops < 0 || trustProxyHops > 5) {
+    throw new Error("TRUST_PROXY_HOPS must be an integer between 0 and 5");
+  }
+  app.set("trust proxy", trustProxyHops);
+}
+
 /*
  * Assign an ID before middleware that may reject a request.
  * This ensures even CORS and body-parser errors are traceable.
@@ -112,46 +123,6 @@ app.use(
 
 /*
 |--------------------------------------------------------------------------
-| Request ID
-|--------------------------------------------------------------------------
-*/
-
-/*
- *
- * Backend
- *   |
- *   +---- requestId = 8c0...
- *
- * Later the same requestId can appear in:
- *
- * HTTP logs
- * service logs
- * security events
- * audit logs
- * error logs
- *
- * This becomes extremely useful when the system is distributed.
- */
-app.use((req, res, next) => {
-  const incomingRequestId = req.get("X-Request-ID");
-
-  if (
-    incomingRequestId &&
-    typeof incomingRequestId === "string" &&
-    incomingRequestId.length <= 128
-  ) {
-    req.id = incomingRequestId;
-  } else {
-    req.id = crypto.randomUUID(); // for each request we set an id for the use od distributed systems
-  }
-
-  res.setHeader("X-Request-ID", req.id);
-
-  next();
-});
-
-/*
-|--------------------------------------------------------------------------
 | Health check
 |--------------------------------------------------------------------------
 */
@@ -191,8 +162,25 @@ app.get("/api/v1/readyz", (req, res) => {
   const mongoReady = mongoose.connection.readyState === 1;
 
   const redisReady = redisClient.isReady;
+  const biometricProviderConfigured = Boolean(
+    process.env.BIOMETRIC_BASE_URL && process.env.BIOMETRIC_API_KEY
+  );
+  // Gate only the actual Render production service; local Docker commonly uses
+  // NODE_ENV=production for parity but should not pretend a campus pilot is approved.
+  const releaseChannel = String(
+    process.env.ATTENDANCE_RELEASE_CHANNEL || "production"
+  ).trim().toLowerCase();
+  const isRenderProduction =
+    process.env.NODE_ENV === "production" &&
+    releaseChannel === "production" &&
+    (process.env.RENDER === "true" || Boolean(process.env.RENDER_SERVICE_ID));
+  const biometricReleaseApproved =
+    process.env.BIOMETRIC_PRODUCTION_APPROVED === "true";
+  const biometricReady =
+    !isRenderProduction ||
+    (biometricProviderConfigured && biometricReleaseApproved);
 
-  const ready = mongoReady && redisReady;
+  const ready = mongoReady && redisReady && biometricReady;
 
   return res.status(ready ? 200 : 503).json({
     success: ready,
@@ -202,6 +190,8 @@ app.get("/api/v1/readyz", (req, res) => {
       mongodb: mongoReady,
 
       redis: redisReady,
+      biometricProvider: biometricProviderConfigured,
+      biometricReleaseApproved,
     },
 
     requestId: req.id,
@@ -283,7 +273,7 @@ app.use((err, req, res, next) => {
     const logEntry = {
         requestId: req.id,
         method: req.method,
-        path: req.originalUrl,
+        path: req.path,
         statusCode,
         code: errorCode
     };

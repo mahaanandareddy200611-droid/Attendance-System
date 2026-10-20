@@ -1,5 +1,7 @@
+const mongoose = require("mongoose");
 const Course = require("../../models/Course.model");
 const ClassSection = require("../../models/ClassSection.model");
+const AttendanceSession = require("../../models/AttendanceSession.model");
 const Enrollment = require("../../models/Enrollment.model");
 const User = require("../../models/Auth.model");
 const AppError = require("../../utils/AppError");
@@ -349,4 +351,73 @@ exports.getSectionStudents = async ({ sectionId, userId, role, query = "", page:
     ]);
 
     return { data, pagination: pagination(page, limit, total) };
+};
+
+exports.updateSectionLocation = async ({ sectionId, latitude, longitude } = {}) => {
+    const id = String(sectionId || "");
+    if (!/^[a-f\d]{24}$/i.test(id)) {
+        throw new AppError("A valid section ID is required", 400);
+    }
+
+    const lat = Number(latitude);
+    const lon = Number(longitude);
+
+    if (!Number.isFinite(lat) || lat < -90 || lat > 90) {
+        throw new AppError("Latitude must be between -90 and 90", 400);
+    }
+    if (!Number.isFinite(lon) || lon < -180 || lon > 180) {
+        throw new AppError("Longitude must be between -180 and 180", 400);
+    }
+
+    const dbSession = await mongoose.startSession();
+    let updatedSection;
+
+    try {
+        await dbSession.withTransaction(async () => {
+            // This write intentionally conflicts with createSession's write to
+            // the same ClassSection document. Snapshot update and session
+            // creation therefore serialize instead of racing on stale room data.
+            const section = await ClassSection.findOneAndUpdate(
+                { _id: id, status: "ACTIVE" },
+                {
+                    $set: {
+                        "room.latitude": lat,
+                        "room.longitude": lon
+                    },
+                    $inc: { locationVersion: 1 }
+                },
+                {
+                    new: true,
+                    runValidators: true,
+                    session: dbSession
+                }
+            ).select("_id name room");
+
+            if (!section) {
+                throw new AppError("Active class section not found", 404);
+            }
+
+            const activeSession = await AttendanceSession.findOne({
+                sectionId: id,
+                status: "ACTIVE",
+                expiresAt: { $gt: new Date() }
+            })
+                .select("sessionId expiresAt")
+                .session(dbSession)
+                .lean();
+
+            if (activeSession) {
+                throw new AppError(
+                    "End the active attendance session before changing this room location",
+                    409
+                );
+            }
+
+            updatedSection = section.toObject();
+        });
+
+        return updatedSection;
+    } finally {
+        await dbSession.endSession();
+    }
 };

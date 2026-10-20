@@ -1,3 +1,4 @@
+const { buildAttendanceSignaturePayload } = require("./attendanceSignaturePayload");
 const crypto =
     require("crypto");
 
@@ -442,7 +443,12 @@ exports.verifyAttendanceDevice =
         signature,
         sessionId,
         token,
-        idempotencyKey
+        idempotencyKey,
+        biometricAssertionId,
+        latitude,
+        longitude,
+        accuracyMeters,
+        capturedAt
     }) => {
 
         const device =
@@ -462,13 +468,17 @@ exports.verifyAttendanceDevice =
         }
 
 
-        const message =
-            [
-                "ATTENDANCE_V1",
-                sessionId,
-                token,
-                idempotencyKey
-            ].join("|");
+        const message = buildAttendanceSignaturePayload({
+            deviceId,
+            sessionId,
+            token,
+            idempotencyKey,
+            biometricAssertionId,
+            latitude,
+            longitude,
+            accuracyMeters,
+            capturedAt
+        });
 
 
         let receivedSignature;

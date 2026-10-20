@@ -15,8 +15,11 @@ const {
 } = require("./src/config/redis");
 
 const {
-    initializeSocket
+    initializeSocket,
+    closeSocket
 } = require("./src/socket/socket");
+
+const { expireExpiredSessions } = require("./src/modules/Attendance/AttendanceService");
 
 const mongoose =
     require("mongoose");
@@ -27,6 +30,27 @@ const PORT =
 let httpServer;
 
 let shuttingDown = false;
+let expirationSweepTimer;
+let expirationSweepRunning = false;
+
+const runExpirationSweep = async () => {
+    if (expirationSweepRunning || shuttingDown) return;
+    expirationSweepRunning = true;
+    try {
+        const expiredSessionIds = await expireExpiredSessions();
+        if (expiredSessionIds.length > 0) {
+            console.info("Expired attendance sessions finalized", { count: expiredSessionIds.length });
+        }
+    } catch (error) {
+        // Do not emit database details or student identifiers into routine logs.
+        console.error("Attendance session expiry sweep failed", {
+            name: error?.name || "Error",
+            code: error?.code || "UNKNOWN"
+        });
+    } finally {
+        expirationSweepRunning = false;
+    }
+};
 
 
 const startServer = async () => {
@@ -45,6 +69,11 @@ const startServer = async () => {
         await initializeSocket(
             httpServer
         );
+
+        const expirySweepMs = Math.max(5000, Number(process.env.SESSION_EXPIRY_SWEEP_MS) || 15000);
+        expirationSweepTimer = setInterval(() => { void runExpirationSweep(); }, expirySweepMs);
+        expirationSweepTimer.unref();
+        void runExpirationSweep();
 
 
         httpServer.listen(
@@ -73,59 +102,63 @@ const startServer = async () => {
 };
 
 
-const shutdown =
-    async (signal) => {
+const shutdown = async (signal, exitCode = 0) => {
+    if (shuttingDown) return;
+    shuttingDown = true;
 
-        if (shuttingDown) {
-            return;
+    console.log(`${signal} received. Shutting down...`);
+
+    if (expirationSweepTimer) clearInterval(expirationSweepTimer);
+
+    // A stuck HTTP/WebSocket connection must not prevent the process from
+    // terminating forever during a platform rollout or fatal exception.
+    const forceExitTimer = setTimeout(() => {
+        console.error("Graceful shutdown timed out");
+        process.exit(1);
+    }, 10000);
+
+    try {
+        try {
+            // PATCH: wait for active attendance-session expiry sweep before closing dependencies.
+            // The shutdown path must clear the timer and prevent new sweeps first.
+            while (expirationSweepRunning) {
+                await new Promise((resolve) => setTimeout(resolve, 25));
+            }
+            await closeSocket();
+        } catch (error) {
+            exitCode = 1;
+            console.error("Socket shutdown failed", { name: error?.name || "Error" });
         }
 
-        shuttingDown = true;
-
-        console.log(
-            `${signal} received. Shutting down...`
-        );
-
-
-        /*
-        Stop accepting new HTTP
-        connections.
-        */
-        if (httpServer) {
-
-            await new Promise(
-                (resolve) => {
-
-                    httpServer.close(
-                        resolve
-                    );
-                }
-            );
+        if (httpServer?.listening) {
+            await new Promise((resolve) => httpServer.close(() => resolve()));
         }
 
-
-        /*
-        Close MongoDB.
-        */
-        await mongoose.connection.close();
-
-
-        /*
-        Close Redis.
-        */
-        if (
-            redisClient.isOpen
-        ) {
-            await redisClient.quit();
+        try {
+            await mongoose.connection.close();
+        } catch (error) {
+            exitCode = 1;
+            console.error("MongoDB shutdown failed", { name: error?.name || "Error" });
         }
 
+        if (redisClient.isOpen) {
+            try {
+                await redisClient.quit();
+            } catch (error) {
+                exitCode = 1;
+                console.error("Redis shutdown failed", { name: error?.name || "Error" });
+            }
+        }
 
-        console.log(
-            "Shutdown complete ✅"
-        );
-
-        process.exit(0);
-    };
+        console.log("Shutdown complete");
+    } catch (error) {
+        exitCode = 1;
+        console.error("Shutdown failed", { name: error?.name || "Error" });
+    } finally {
+        clearTimeout(forceExitTimer);
+        process.exit(exitCode);
+    }
+};
 
 
 process.on(
@@ -149,7 +182,8 @@ process.on(
         );
 
         shutdown(
-            "uncaughtException"
+            "uncaughtException",
+            1
         );
     }
 );
@@ -165,7 +199,8 @@ process.on(
         );
 
         shutdown(
-            "unhandledRejection"
+            "unhandledRejection",
+            1
         );
     }
 );

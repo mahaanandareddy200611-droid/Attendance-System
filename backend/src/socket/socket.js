@@ -195,10 +195,18 @@ const initializeSocket =
                         );
 
                     const userId = tokenUser.id || tokenUser.sub;
-                    const user = await User.findById(userId).select("role status").lean();
+                    const user = await User.findById(userId).select("role status tokenVersion").lean();
+                    const currentTokenVersion = Number.isInteger(user?.tokenVersion)
+                        ? user.tokenVersion
+                        : 0;
 
-                    if (!user || user.status !== "ACTIVE") {
-                        return next(new Error("Active account required"));
+                    if (
+                        !user ||
+                        user.status !== "ACTIVE" ||
+                        !Number.isInteger(tokenUser.tokenVersion) ||
+                        tokenUser.tokenVersion !== currentTokenVersion
+                    ) {
+                        return next(new Error("Active, non-revoked account required"));
                     }
 
 
@@ -397,6 +405,29 @@ const initializeSocket =
     };
 
 
+const closeSocket = async () => {
+    const currentIo = io;
+    const clients = [pubClient, subClient].filter(Boolean);
+    io = null;
+    pubClient = null;
+    subClient = null;
+
+    if (currentIo) {
+        await new Promise((resolve) => currentIo.close(() => resolve()));
+    }
+
+    await Promise.allSettled(
+        clients.map(async (client) => {
+            if (client.status === "ready") {
+                await client.quit();
+            } else {
+                client.disconnect();
+            }
+        })
+    );
+};
+
+
 const emitAttendanceMarked =
     ({
         sessionId,
@@ -462,6 +493,7 @@ const emitSessionEnded =
 
 module.exports = {
     initializeSocket,
+    closeSocket,
     emitAttendanceMarked,
     emitSessionEnded,
     sessionRoom
