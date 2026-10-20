@@ -80,3 +80,5 @@ export async function verifyActiveBiometricSequence({ sessionId, challengeId, ch
   });
   return response.data.data.assertionId;
 }
+
+export const deleteMyBiometricEnrollment = () => api.delete("/biometric/me");
