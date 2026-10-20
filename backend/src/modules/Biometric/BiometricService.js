@@ -17,7 +17,7 @@ const provider =
 exports.getMyEnrollment = async ({ userId }) => {
     const enrollment = await BiometricEnrollment.findOne({
         userId,
-        status: "ACTIVE"
+        status: { $in: ["ACTIVE", "DELETE_PENDING"] }
     }).select("status provider modelVersion enrolledAt lastVerifiedAt").lean();
     return enrollment || null;
 };
@@ -134,12 +134,17 @@ exports.enroll =
         const existing =
             await BiometricEnrollment.findOne({
                 userId,
-                status: "ACTIVE"
+                status: { $in: ["ACTIVE", "DELETE_PENDING"] }
             });
 
+        if (existing?.status === "DELETE_PENDING") {
+            throw new AppError(
+                "Biometric enrollment deletion is still pending; retry after provider cleanup completes",
+                409
+            );
+        }
 
-        if (existing) {
-
+        if (existing?.status === "ACTIVE") {
             throw new AppError(
                 "Biometric enrollment already exists",
                 409
