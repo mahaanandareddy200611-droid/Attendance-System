@@ -6,7 +6,7 @@ export const getMyAttendanceRecords = (params = {}) =>
 export const getAvailableAttendanceSessions = () =>
   api.get("/attendance/sessions/available");
 
-function getCurrentLocation() {
+export function getCurrentLocation() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation)
       return reject(new Error("Location is not supported by this browser."));
@@ -34,13 +34,16 @@ export async function markAttendance({
   sessionId,
   token,
   biometricAssertionId,
+  locationEvidence,
   idempotencyKey,
 }) {
   const requestKey = idempotencyKey || crypto.randomUUID();
   if (!biometricAssertionId) {
     throw new Error("Complete the face and liveness check before marking attendance.");
   }
-  const location = await getCurrentLocation();
+  // Obtain location before QR scanning so GPS permission/latency does not
+  // consume the short QR freshness window.
+  const location = locationEvidence || await getCurrentLocation();
   const deviceId = localStorage.getItem(`attendanceDeviceId:${userId}`);
   if (!deviceId)
     throw new Error("Register this browser as your attendance device first.");
