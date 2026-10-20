@@ -20,6 +20,15 @@ exports.uploadEvidence = asyncHandler(async (req, res) => {
   });
 });
 
+exports.listSessionEvidence = asyncHandler(async (req, res) => {
+  const data = await mediaService.listSessionEvidence({
+    sessionId: req.params.sessionId,
+    actorId: req.user.id,
+    role: req.user.role,
+  });
+  return res.status(200).json({ success: true, ...data, requestId: req.id });
+});
+
 exports.getDownloadUrl = asyncHandler(async (req, res) => {
   const data = await mediaService.createDownloadUrl({
     assetId: req.params.assetId,
