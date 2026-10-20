@@ -1,8 +1,7 @@
 import * as Location from "expo-location";
-import * as Crypto from "expo-crypto";
 
 import { apiRequest } from "./api";
-import { getOrRegisterNativeDevice, signAttendance } from "./device";
+import { signAttendance } from "./device";
 
 export async function getAvailableSessions(token: string) {
   const response = await apiRequest<any>("/attendance/sessions/available", { token });
@@ -34,20 +33,22 @@ export async function captureLocationEvidence() {
 export async function submitAttendance({
   userId,
   token,
+  deviceId,
   sessionId,
   qrToken,
+  idempotencyKey,
   biometricAssertionId,
   location,
 }: {
   userId: string;
   token: string;
+  deviceId: string;
   sessionId: string;
   qrToken: string;
+  idempotencyKey: string;
   biometricAssertionId: string;
   location: { latitude: number; longitude: number; accuracyMeters: number; capturedAt: string };
 }) {
-  const deviceId = await getOrRegisterNativeDevice(userId, token);
-  const idempotencyKey = Crypto.randomUUID();
   const deviceSignature = await signAttendance({
     userId,
     deviceId,
