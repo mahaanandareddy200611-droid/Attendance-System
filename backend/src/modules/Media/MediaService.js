@@ -115,6 +115,20 @@ exports.uploadSessionEvidence = async ({
   return publicMedia(asset);
 };
 
+exports.listSessionEvidence = async ({ sessionId, actorId, role }) => {
+  const session = await findAccessibleSession({ sessionId, actorId, role });
+  const assets = await MediaAsset.find({
+    sessionId: session._id,
+    status: "ACTIVE",
+    retentionUntil: { $gt: new Date() },
+  })
+    .select("ownerId sessionId purpose contentType sizeBytes sha256 status retentionUntil createdAt deletedAt")
+    .sort({ createdAt: -1 })
+    .limit(100)
+    .lean();
+  return { data: assets.map(publicMedia) };
+};
+
 async function loadOwnedAsset({ assetId, actorId, role }) {
   if (!/^[a-f\d]{24}$/i.test(String(assetId || ""))) {
     throw new AppError("Media asset not found", 404);
