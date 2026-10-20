@@ -1,31 +1,40 @@
-# Attendance System: merge and manual deployment checklist
+# Attendance System release-readiness gates
 
-This change does not deploy the service. Keep Render deployment manual until staging checks pass.
+This document is a checklist, not a deployment command. Deploy to staging manually first; do not use real student biometric data until the acceptance checks pass.
 
-## Before merging
-- Confirm the latest Backend CI and Frontend CI are successful.
-- Review the PR diff and merge the latest PR head into `main`.
-- Pull updated `main` locally and follow the backend, lecturer-web, and student-app README instructions.
+## 1. Merge gate
+- Require Backend CI and Frontend CI to pass on the exact PR head.
+- Review the full diff; keep secrets and real student data out of Git.
+- Pull `main` after merge and run `npm ci` plus the documented test/build commands in backend, lecturer-web, and student-app.
 
-## Required Render backend settings
-Set secrets in Render's environment-variable UI; never commit secrets:
-- `MONGO_URL`: reachable MongoDB deployment with authentication/network access configured.
+## 2. Render environment
+Set secrets in Render's environment UI:
+- `MONGO_URL`: reachable, authenticated MongoDB database.
 - `REDIS_URL`: reachable Redis/Key Value connection string.
-- `JWT_SECRET` and `ATTENDANCE_TOKEN_SECRET`: separate high-entropy secrets.
+- `JWT_SECRET` and `ATTENDANCE_TOKEN_SECRET`: separate high-entropy values.
 - `CORS_ORIGINS`: exact deployed lecturer-web origin(s), comma-separated.
-- `OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_REGION`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`: private S3-compatible bucket settings. Do not make the bucket public.
-- `BIOMETRIC_BASE_URL` and `BIOMETRIC_API_KEY`: reachable deployed biometric provider if biometric attendance is enabled.
-- Mail variables only if password-recovery email is required.
+- `TRUST_PROXY_HOPS=1` for the Render reverse proxy.
+- `OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_REGION`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`: private S3-compatible bucket settings with least-privilege access.
+- `BIOMETRIC_BASE_URL`, `BIOMETRIC_API_KEY`, collection/model/threshold settings for a reachable provider.
+- `BIOMETRIC_PRODUCTION_APPROVED=false` until model/licence review, real-device active liveness/PAD, security testing, privacy review, and a supervised pilot have passed.
+- For email recovery, configure `MAIL_USER` and `MAIL_PASSWORD`; optionally configure `MAIL_HOST`, `MAIL_PORT`, and `MAIL_SECURE` for your SMTP provider.
 
-Use the exact variable names read by the application. Keep `BIOMETRIC_PRODUCTION_APPROVED=false` until real-device liveness/PAD, model/licence review, device-binding, and pilot checks pass.
+Render automatic deployment must remain disabled until a deliberate manual release. Verify both Blueprint configuration and the existing service dashboard setting.
 
-## Staging verification before real student data
-1. Deploy manually to staging and wait for `/api/v1/readyz` to report healthy.
-2. With storage credentials in a trusted environment, run `cd backend && npm ci && npm run storage:smoke`. It must confirm upload, unsigned access denied, signed download returns identical bytes, and deletion makes the object unavailable.
-3. Verify student/lecturer login, session creation, rotating QR, challenge expiry/replay rejection, device binding, GPS rejection, attendance submission, and lecturer dashboard with test accounts.
-4. Verify biometric enrollment and active liveness on a real supported camera/device against the deployed provider. Test spoof/replay attempts; an API success alone is not a PAD evaluation.
-5. Verify consented evidence upload, owner-only signed URL, explicit deletion, retention expiry, and retry after storage outage. Confirm bucket privacy and that signed URLs/image bytes never appear in logs.
-6. Run expected classroom concurrency and failure tests; inspect logs and health checks before production enablement.
+## 3. Staging acceptance
+1. Deploy manually to staging. Check `/api/v1/livez`, `/api/v1/health`, and `/api/v1/readyz`; readiness must reflect MongoDB/Redis and the production biometric gate.
+2. With trusted storage credentials, run `cd backend && npm ci && npm run storage:smoke`. Verify upload, private unsigned access denied, signed GET returns the exact bytes, and deletion makes the object unavailable.
+3. Verify email password recovery using a test account: request OTP, check expiry and attempt limits, verify OTP once, reset password once, and confirm previous JWTs are rejected.
+4. With test users, verify lecturer login, course/session creation, eligible roster, rotating QR expiry, student login, device registration/signature, GPS rejection, biometric challenge and verification, attendance submission, duplicate/replay rejection, and lecturer results.
+5. Test evidence consent, owner-only signed URL, explicit deletion, expiry cleanup, and retry after a storage outage. Confirm logs contain no OTPs, tokens, signed URLs, image bytes, or biometric payloads.
+6. Test provider timeout/outage, wrong student/session, revoked device, stale QR, and duplicate submissions.
+7. Load-test expected classroom concurrency and inspect health, logs, and operational alerts.
+8. Verify backups/restore, retention and deletion policy, institution approval, privacy notice/consent, and incident procedure before production data.
 
-## Limits
-Green CI proves automated tests/builds pass; it does not prove cloud credentials, camera/liveness, legal/privacy approval, deployed frontend integration, or classroom-scale behavior. Do not collect real student biometric data until institutional approval, notice/consent, retention/deletion policy, and access controls have been reviewed.
+## 4. Physical student app
+- Set `EXPO_PUBLIC_API_BASE_URL` to the deployed HTTPS API base including `/api/v1`.
+- A physical phone cannot use the PC's `localhost`; use a reachable LAN address for local testing.
+- Test a native internal build on a physical device. Web export does not validate native camera, SecureStore, device-key signing, or location permissions.
+
+## 5. Go/no-go
+Green CI validates automated checks, not cloud credentials, live provider behavior, anti-spoofing performance, native camera integration, privacy/legal approval, or classroom load. Do not enable production biometrics until each relevant gate has evidence.
