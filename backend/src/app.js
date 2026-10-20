@@ -11,6 +11,7 @@ const DeviceRoutes = require("./modules/Device/DeviceRoutes");
 
 const BiometricRoutes = require("./modules/Biometric/BiometricRoutes");
 const AttendanceRoutes = require("./modules/Attendance/AttendanceRouter");
+const MediaRoutes = require("./modules/Media/MediaRoutes");
 
 const AuthRoutes = require("./modules/Auth/AuthRouter");
 
@@ -211,6 +212,8 @@ app.use("/api/v1/biometric", BiometricRoutes);
 
 app.use("/api/v1/attendance", AttendanceRoutes);
 
+app.use("/api/v1/media", MediaRoutes);
+
 /*
 |--------------------------------------------------------------------------
 | 404 handler
@@ -253,13 +256,17 @@ app.use((err, req, res, next) => {
         return next(err);
     }
 
-    const statusCode =
-        Number(err.statusCode || err.status) ||
-        (
-            err.type === "entity.too.large" ||
-            err.code === "LIMIT_FILE_SIZE"
-                ? 413
-                : 500
+    const isMulterError = err?.name === "MulterError";
+    const statusCode = isMulterError
+        ? (err.code === "LIMIT_FILE_SIZE" ? 413 : 400)
+        : (
+            Number(err.statusCode || err.status) ||
+            (
+                err.type === "entity.too.large" ||
+                err.code === "LIMIT_FILE_SIZE"
+                    ? 413
+                    : 500
+            )
         );
 
     const errorCode =
