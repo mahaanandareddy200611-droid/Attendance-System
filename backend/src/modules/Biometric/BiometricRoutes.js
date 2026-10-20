@@ -104,6 +104,13 @@ router.get(
     getMyEnrollment
 );
 
+router.delete(
+    "/me",
+    Auth,
+    authorize("Student"),
+    require("./BiometricController").revokeMyEnrollment
+);
+
 router.post(
     "/enroll",
     enrollmentLimits.ip,
