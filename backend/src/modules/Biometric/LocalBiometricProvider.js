@@ -450,3 +450,24 @@ exports.detect = async ({ imageBuffer, mimeType }) => {
         landmarks: ActiveLiveness.normalizeLandmarks(face.landmarks || face.keypoints)
     };
 };
+
+
+exports.deletePerson = async ({ providerUserId }) => {
+    if (!providerUserId || typeof providerUserId !== "string") {
+        throw new AppError("Biometric provider person identifier is required", 400);
+    }
+
+    try {
+        await request({
+            path: "/v1/collections/" +
+                encodeURIComponent(process.env.BIOMETRIC_COLLECTION_ID || "students") +
+                "/persons/" + encodeURIComponent(providerUserId),
+            method: "DELETE"
+        });
+        return { deleted: true };
+    } catch (error) {
+        // A missing provider person is already in the desired deleted state.
+        if (Number(error.statusCode) === 404) return { deleted: true, alreadyMissing: true };
+        throw error;
+    }
+};

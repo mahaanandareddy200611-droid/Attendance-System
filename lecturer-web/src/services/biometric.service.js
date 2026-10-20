@@ -51,7 +51,34 @@ export async function verifyBiometricForSession({ sessionId, image }) {
   const form = new FormData();
   form.append("sessionId", sessionId);
   form.append("challengeId", challengeId);
+  // The backend requires proof of the issued nonce; sending only the challengeId is insufficient.
+  form.append("challenge", challengeResponse.data.data.challenge);
   form.append("image", photo, photo.name || "verification.jpg");
   const response = await api.post("/biometric/verify", form);
   return response.data.data.assertionId;
 }
+
+
+export async function createActiveBiometricChallenge(sessionId) {
+  const response = await api.post("/biometric/challenge-active", { sessionId });
+  return response.data.data;
+}
+
+export async function verifyActiveBiometricSequence({ sessionId, challengeId, challenge, frames }) {
+  if (!Array.isArray(frames) || frames.length !== 3) {
+    throw new Error("Capture all three requested liveness frames first.");
+  }
+  const form = new FormData();
+  form.append("sessionId", sessionId);
+  form.append("challengeId", challengeId);
+  form.append("challenge", challenge);
+  frames.forEach((frame, index) => {
+    form.append("frames", frame, frame.name || `liveness-frame-${index + 1}.jpg`);
+  });
+  const response = await api.post("/biometric/verify-active", form, {
+    timeout: 30000,
+  });
+  return response.data.data.assertionId;
+}
+
+export const deleteMyBiometricEnrollment = () => api.delete("/biometric/me");

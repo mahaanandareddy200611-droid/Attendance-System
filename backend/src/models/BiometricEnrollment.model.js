@@ -36,6 +36,7 @@ const BiometricEnrollmentSchema =
                 type: String,
                 enum: [
                     "ACTIVE",
+                    "DELETE_PENDING",
                     "REVOKED"
                 ],
                 default: "ACTIVE",
