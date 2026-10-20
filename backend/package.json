@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test",
     "admin:create": "node scripts/create-admin.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "evidence:cleanup": "node scripts/cleanup-attendance-evidence.js"
   },
   "keywords": [],
   "author": "",
