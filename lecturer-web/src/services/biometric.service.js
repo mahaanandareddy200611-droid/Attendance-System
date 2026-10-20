@@ -51,6 +51,8 @@ export async function verifyBiometricForSession({ sessionId, image }) {
   const form = new FormData();
   form.append("sessionId", sessionId);
   form.append("challengeId", challengeId);
+  // The backend requires proof of the issued nonce; sending only the challengeId is insufficient.
+  form.append("challenge", challengeResponse.data.data.challenge);
   form.append("image", photo, photo.name || "verification.jpg");
   const response = await api.post("/biometric/verify", form);
   return response.data.data.assertionId;
