@@ -6,7 +6,6 @@ dotenv.config();
 const mongoose = require("mongoose");
 const connectDB = require("../src/config/mongoDb");
 const { service } = require("../src/modules/AttendanceEvidence/AttendanceEvidenceService");
-const { redisClient } = require("../src/config/redis");
 
 async function main() {
     try {
@@ -17,9 +16,6 @@ async function main() {
     } finally {
         if (mongoose.connection.readyState !== 0) {
             await mongoose.disconnect();
-        }
-        if (redisClient.isOpen) {
-            await redisClient.quit();
         }
     }
 }
