@@ -13,6 +13,12 @@ services:
         value: production
       - key: ATTENDANCE_RELEASE_CHANNEL
         value: staging
+      - key: ATTENDANCE_REQUIRE_BIOMETRIC
+        value: "true"
+      - key: ATTENDANCE_REQUIRE_PRIVATE_STORAGE
+        value: "true"
+      - key: ATTENDANCE_REQUIRE_EMAIL
+        value: "true"
       - key: TRUST_PROXY_HOPS
         value: "1"
       - key: PORT
@@ -39,12 +45,14 @@ services:
         sync: false
       - key: MAIL_PASSWORD
         sync: false
+      - key: MAIL_SECURE
+        value: ""
       - key: QR_REFRESH_MS
-        sync: false
+        value: "3000"
       - key: QR_ALLOWED_SKEW_SLOTS
-        sync: false
+        value: "1"
       - key: ATTENDANCE_SESSION_MINUTES
-        sync: false
+        value: "60"
       - key: CORS_ORIGINS
         sync: false
       - key: ATTENDANCE_STUDENT_RATE_CAPACITY
@@ -56,16 +64,8 @@ services:
       - key: ATTENDANCE_IP_RATE_REFILL
         sync: false
 
-      - key: BIOMETRIC_SERVICE_URL
-        sync: false
-      - key: BIOMETRIC_SERVICE_KEY
-        sync: false
       - key: BIOMETRIC_CHALLENGE_TTL_MS
-        sync: false
-      - key: INSIGHTFACE_AUTH_ENABLED
-        sync: false
-      - key: INSIGHTFACE_API_KEY
-        sync: false
+        value: "30000"
       - key: BIOMETRIC_PRODUCTION_APPROVED
         value: "false"
       - key: BIOMETRIC_BASE_URL
@@ -73,17 +73,17 @@ services:
       - key: BIOMETRIC_API_KEY
         sync: false
       - key: BIOMETRIC_COLLECTION_ID
-        sync: false
+        value: students
       - key: BIOMETRIC_MODEL_VERSION
         sync: false
       - key: BIOMETRIC_TIMEOUT_MS
-        sync: false
+        value: "5000"
       - key: BIOMETRIC_MATCH_THRESHOLD
-        sync: false
+        value: "0.40"
       - key: BIOMETRIC_LIVENESS_THRESHOLD
         sync: false
       - key: BIOMETRIC_ASSERTION_TTL_MS
-        sync: false
+        value: "30000"
       - key: OBJECT_STORAGE_ENDPOINT
         sync: false
       - key: OBJECT_STORAGE_BUCKET
@@ -100,11 +100,13 @@ services:
         value: "30"
       - key: MEDIA_URL_TTL_SECONDS
         value: "60"
+      - key: ATTENDANCE_EVIDENCE_RETENTION_DAYS
+        value: "7"
 
       - key: ATTENDANCE_MAX_GPS_ACCURACY_METERS
-        sync: false
-      - key: MAX_GPS_ACCURACY_METERS
-        sync: false
+        value: "150"
+      - key: ATTENDANCE_MAX_GPS_AGE_MS
+        value: "120000"
 
   - type: keyvalue
     name: attendance-redis-staging

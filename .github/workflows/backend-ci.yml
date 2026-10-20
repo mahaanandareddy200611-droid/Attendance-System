@@ -5,10 +5,16 @@ on:
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
+      - "render.yaml"
+      - "backend/render.yaml"
+      - "DEPLOYMENT_READINESS.md"
   pull_request:
     paths:
       - "backend/**"
       - ".github/workflows/backend-ci.yml"
+      - "render.yaml"
+      - "backend/render.yaml"
+      - "DEPLOYMENT_READINESS.md"
   workflow_dispatch:
 
 permissions:

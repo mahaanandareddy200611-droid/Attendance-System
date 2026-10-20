@@ -6,11 +6,19 @@ on:
       - "lecturer-web/**"
       - "student-app/**"
       - ".github/workflows/frontend-ci.yml"
+      - "backend/**"
+      - "render.yaml"
+      - "backend/render.yaml"
+      - "DEPLOYMENT_READINESS.md"
   pull_request:
     paths:
       - "lecturer-web/**"
       - "student-app/**"
       - ".github/workflows/frontend-ci.yml"
+      - "backend/**"
+      - "render.yaml"
+      - "backend/render.yaml"
+      - "DEPLOYMENT_READINESS.md"
   workflow_dispatch:
 
 permissions:

@@ -1,0 +1,39 @@
+name: Staging Email Smoke Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      test_recipient:
+        description: Test inbox to receive one non-sensitive delivery test
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  email:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Send non-sensitive email configuration test
+        working-directory: backend
+        run: npm run mail:smoke
+        env:
+          MAIL_SMOKE_TO: ${{ inputs.test_recipient }}
+          MAIL_USER: ${{ secrets.MAIL_USER }}
+          MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
+          MAIL_HOST: ${{ secrets.MAIL_HOST }}
+          MAIL_PORT: ${{ secrets.MAIL_PORT }}
+          MAIL_SECURE: ${{ secrets.MAIL_SECURE }}
