@@ -119,16 +119,60 @@ export async function registerThisBrowser(userId) {
   return deviceId;
 }
 
+function canonicalNumber(value, fieldName) {
+  if (
+    value === null ||
+    value === undefined ||
+    (typeof value === "string" && value.trim() === "")
+  ) {
+    throw new TypeError(`${fieldName} must be a finite number`);
+  }
+
+  const number = Number(value);
+  if (!Number.isFinite(number)) {
+    throw new TypeError(`${fieldName} must be a finite number`);
+  }
+  return Object.is(number, -0) ? "0" : String(number);
+}
+
+function canonicalTimestamp(value) {
+  const date = value instanceof Date ? value : new Date(value);
+  if (!Number.isFinite(date.getTime())) {
+    throw new TypeError("capturedAt must be a valid timestamp");
+  }
+  return date.toISOString();
+}
+
 export async function signAttendanceRequest({
   userId,
+  deviceId,
   sessionId,
   token,
   idempotencyKey,
+  biometricAssertionId,
+  latitude,
+  longitude,
+  accuracyMeters,
+  capturedAt,
 }) {
   const privateKey = await getDevicePrivateKey(userId);
   if (!privateKey)
     throw new Error("Register this browser as your attendance device first.");
-  const message = ["ATTENDANCE_V1", sessionId, token, idempotencyKey].join("|");
+
+  // Keep this fixed-order payload identical to backend attendanceSignaturePayload.js.
+  const message = JSON.stringify([
+    "ATTENDANCE_V2",
+    String(deviceId ?? ""),
+    String(sessionId ?? ""),
+    String(token ?? ""),
+    String(idempotencyKey ?? ""),
+    String(biometricAssertionId ?? ""),
+    canonicalNumber(latitude, "latitude"),
+    canonicalNumber(longitude, "longitude"),
+    canonicalNumber(accuracyMeters, "accuracyMeters"),
+    canonicalTimestamp(capturedAt),
+  ]);
+
   const signatureBytes = await crypto.subtle.sign(
     "Ed25519",
     privateKey,

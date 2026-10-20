@@ -185,3 +185,14 @@ exports.verifyActiveSequence = asyncHandler(async (req, res) => {
     });
     return res.status(200).json({ success: true, data: result, requestId: req.id });
 });
+
+
+exports.revokeMyEnrollment = asyncHandler(async (req, res) => {
+    const result = await biometricService.revokeEnrollment({ userId: req.user.id });
+    return res.status(200).json({
+        success: true,
+        message: result.status === "REVOKED" ? "Biometric enrollment deleted or already absent" : "Biometric deletion pending",
+        data: result,
+        requestId: req.id
+    });
+});

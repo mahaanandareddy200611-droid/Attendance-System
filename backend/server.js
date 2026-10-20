@@ -20,6 +20,8 @@ const {
 } = require("./src/socket/socket");
 
 const { expireExpiredSessions } = require("./src/modules/Attendance/AttendanceService");
+const { sweepExpiredMediaAssets } = require("./src/modules/Media/MediaService");
+const { sweepPendingBiometricDeletes } = require("./src/modules/Biometric/BiometricService");
 
 const mongoose =
     require("mongoose");
@@ -40,6 +42,14 @@ const runExpirationSweep = async () => {
         const expiredSessionIds = await expireExpiredSessions();
         if (expiredSessionIds.length > 0) {
             console.info("Expired attendance sessions finalized", { count: expiredSessionIds.length });
+        }
+        const mediaCleanup = await sweepExpiredMediaAssets({ limit: 25 });
+        if (mediaCleanup.deleted > 0 || mediaCleanup.failed > 0) {
+            console.info("Retained media cleanup cycle completed", mediaCleanup);
+        }
+        const biometricCleanup = await sweepPendingBiometricDeletes({ limit: 10 });
+        if (biometricCleanup.deleted > 0 || biometricCleanup.failed > 0) {
+            console.info("Biometric deletion retry cycle completed", biometricCleanup);
         }
     } catch (error) {
         // Do not emit database details or student identifiers into routine logs.
@@ -78,6 +88,7 @@ const startServer = async () => {
 
         httpServer.listen(
             PORT,
+            "0.0.0.0",
             () => {
 
                 console.log(

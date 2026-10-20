@@ -963,3 +963,51 @@
     text-align: center;
   }
 }
+
+
+/* Camera-based active liveness */
+.active-liveness-capture {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.active-liveness-video {
+  display: block;
+  width: min(100%, 560px);
+  max-height: 56vh;
+  min-height: 220px;
+  aspect-ratio: 4 / 3;
+  object-fit: cover;
+  background: #101521;
+  border: 1px solid var(--color-line);
+  border-radius: 14px;
+}
+.active-liveness-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+.media-upload-form,
+.media-evidence-list {
+  display: grid;
+  gap: 14px;
+}
+.media-upload-form {
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+}
+.media-evidence-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+@media (max-width: 680px) {
+  .active-liveness-video {
+    min-height: 180px;
+    max-height: 45vh;
+  }
+  .media-upload-form {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

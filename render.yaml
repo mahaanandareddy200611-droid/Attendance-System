@@ -82,6 +82,22 @@ services:
         sync: false
       - key: BIOMETRIC_ASSERTION_TTL_MS
         sync: false
+      - key: OBJECT_STORAGE_ENDPOINT
+        sync: false
+      - key: OBJECT_STORAGE_BUCKET
+        sync: false
+      - key: OBJECT_STORAGE_REGION
+        value: auto
+      - key: OBJECT_STORAGE_ACCESS_KEY_ID
+        sync: false
+      - key: OBJECT_STORAGE_SECRET_ACCESS_KEY
+        sync: false
+      - key: OBJECT_STORAGE_TIMEOUT_MS
+        value: "10000"
+      - key: MEDIA_RETENTION_DAYS
+        value: "30"
+      - key: MEDIA_URL_TTL_SECONDS
+        value: "60"
 
       - key: ATTENDANCE_MAX_GPS_ACCURACY_METERS
         sync: false

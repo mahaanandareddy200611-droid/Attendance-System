@@ -212,7 +212,7 @@ app.use("/api/v1/biometric", BiometricRoutes);
 
 app.use("/api/v1/attendance", AttendanceRoutes);
 
-app.use("/api/v1/attendance-evidence", AttendanceEvidenceRoutes);
+app.use("/api/v1/media", MediaRoutes);
 
 /*
 |--------------------------------------------------------------------------
@@ -256,13 +256,17 @@ app.use((err, req, res, next) => {
         return next(err);
     }
 
-    const statusCode =
-        Number(err.statusCode || err.status) ||
-        (
-            err.type === "entity.too.large" ||
-            err.code === "LIMIT_FILE_SIZE"
-                ? 413
-                : 500
+    const isMulterError = err?.name === "MulterError";
+    const statusCode = isMulterError
+        ? (err.code === "LIMIT_FILE_SIZE" ? 413 : 400)
+        : (
+            Number(err.statusCode || err.status) ||
+            (
+                err.type === "entity.too.large" ||
+                err.code === "LIMIT_FILE_SIZE"
+                    ? 413
+                    : 500
+            )
         );
 
     const errorCode =

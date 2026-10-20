@@ -1,13 +1,12 @@
 import api from "../api/api";
 import { signAttendanceRequest } from "./device.service";
-import { verifyBiometricForSession } from "./biometric.service";
 
 export const getMyAttendanceRecords = (params = {}) =>
   api.get("/attendance/records/me", { params });
 export const getAvailableAttendanceSessions = () =>
   api.get("/attendance/sessions/available");
 
-function getCurrentLocation() {
+export function getCurrentLocation() {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation)
       return reject(new Error("Location is not supported by this browser."));
@@ -34,22 +33,28 @@ export async function markAttendance({
   userId,
   sessionId,
   token,
-  verificationImage,
+  biometricAssertionId,
+  locationEvidence,
   idempotencyKey,
 }) {
   const requestKey = idempotencyKey || crypto.randomUUID();
-  const [location, biometricAssertionId] = await Promise.all([
-    getCurrentLocation(),
-    verifyBiometricForSession({ sessionId, image: verificationImage }),
-  ]);
+  if (!biometricAssertionId) {
+    throw new Error("Complete the face and liveness check before marking attendance.");
+  }
+  // Obtain location before QR scanning so GPS permission/latency does not
+  // consume the short QR freshness window.
+  const location = locationEvidence || await getCurrentLocation();
   const deviceId = localStorage.getItem(`attendanceDeviceId:${userId}`);
   if (!deviceId)
     throw new Error("Register this browser as your attendance device first.");
   const deviceSignature = await signAttendanceRequest({
     userId,
+    deviceId,
     sessionId,
     token,
     idempotencyKey: requestKey,
+    biometricAssertionId,
+    ...location,
   });
   return api.post(
     "/attendance/verify",

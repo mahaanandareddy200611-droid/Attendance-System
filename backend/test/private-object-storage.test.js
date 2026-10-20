@@ -1,138 +1,127 @@
-"use strict";
-
-const { test } = require("node:test");
+const test = require("node:test");
 const assert = require("node:assert/strict");
-const {
-    createPrivateObjectStorage,
-    readConfig,
-    encodeObjectPath,
-    makeSignedUrl
-} = require("../src/modules/AttendanceEvidence/PrivateObjectStorage");
 
-const env = {
-    SUPABASE_URL: "https://project-ref.supabase.co",
-    SUPABASE_SERVICE_ROLE_KEY: "test-service-role-key-not-real",
-    SUPABASE_STORAGE_BUCKET: "attendance-evidence-private",
-    SUPABASE_STORAGE_TIMEOUT_MS: "5000"
-};
+const storage = require("../src/infrastructure/storage/PrivateObjectStorage");
 
-function jsonResponse(status, value) {
-    return {
-        ok: status >= 200 && status < 300,
-        status,
-        async text() { return JSON.stringify(value); }
-    };
+const ENV_KEYS = [
+  "OBJECT_STORAGE_ENDPOINT",
+  "OBJECT_STORAGE_BUCKET",
+  "OBJECT_STORAGE_REGION",
+  "OBJECT_STORAGE_ACCESS_KEY_ID",
+  "OBJECT_STORAGE_SECRET_ACCESS_KEY",
+  "OBJECT_STORAGE_TIMEOUT_MS",
+];
+
+function setStorageEnvironment(t) {
+  const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  process.env.OBJECT_STORAGE_ENDPOINT = "https://example-account.r2.cloudflarestorage.com";
+  process.env.OBJECT_STORAGE_BUCKET = "attendance-private";
+  process.env.OBJECT_STORAGE_REGION = "auto";
+  process.env.OBJECT_STORAGE_ACCESS_KEY_ID = "test-access-key";
+  process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY = "test-secret-key-never-use";
+  process.env.OBJECT_STORAGE_TIMEOUT_MS = "1000";
+  t.after(() => {
+    for (const key of ENV_KEYS) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  });
 }
 
-test("requires a private storage URL and service credential", () => {
-    assert.throws(() => readConfig({}), /not configured/i);
-    assert.throws(() => readConfig({
-        ...env,
-        SUPABASE_URL: "http://storage.example"
-    }), /HTTPS/i);
-    assert.throws(() => readConfig({
-        ...env,
-        SUPABASE_URL: "https://user:password@project-ref.supabase.co"
-    }), /HTTPS/i);
+test("object key encoding rejects path traversal and safely encodes path segments", () => {
+  assert.equal(storage._test.canonicalKey("evidence/abc/photo.jpg"), "/evidence/abc/photo.jpg");
+  assert.equal(storage._test.awsEncode("image name!.jpg"), "image%20name%21.jpg");
+  assert.throws(() => storage._test.canonicalKey("../secret.jpg"), /Object storage key is invalid/);
+  assert.throws(() => storage._test.canonicalKey("/absolute.jpg"), /Object storage key is invalid/);
 });
 
-test("restricts keys to the attendance-evidence namespace and rejects traversal", () => {
-    assert.equal(
-        encodeObjectPath("attendance-evidence/2026/10/abc.jpg"),
-        "attendance-evidence/2026/10/abc.jpg"
-    );
-    assert.throws(() => encodeObjectPath("../private.jpg"), /Invalid/i);
-    assert.throws(() => encodeObjectPath("attendance-evidence/../private.jpg"), /Invalid/i);
-    assert.throws(() => encodeObjectPath("attendance-evidence//private.jpg"), /Invalid/i);
+test("object storage configuration fails closed when credentials are absent", (t) => {
+  const previous = Object.fromEntries(ENV_KEYS.map((key) => [key, process.env[key]]));
+  for (const key of ENV_KEYS) delete process.env[key];
+  t.after(() => {
+    for (const key of ENV_KEYS) {
+      if (previous[key] === undefined) delete process.env[key];
+      else process.env[key] = previous[key];
+    }
+  });
+  assert.throws(
+    () => storage._test.getConfiguration(),
+    (error) => error.statusCode === 503 && /not configured/.test(error.message),
+  );
 });
 
-test("never accepts signed URLs that point outside the configured storage project", () => {
-    assert.throws(
-        () => makeSignedUrl("https://attacker.example/storage/v1/object/sign/bucket/key", env.SUPABASE_URL),
-        /outside the configured project/i
-    );
-    assert.throws(
-        () => makeSignedUrl("/object/public/bucket/key", env.SUPABASE_URL),
-        /outside the configured project/i
-    );
-    assert.equal(
-        makeSignedUrl("/object/sign/bucket/key?token=abc", env.SUPABASE_URL),
-        "https://project-ref.supabase.co/storage/v1/object/sign/bucket/key?token=abc"
-    );
+test("private upload signs a bounded PUT request and does not make the object public", async (t) => {
+  setStorageEnvironment(t);
+  const originalFetch = global.fetch;
+  let captured;
+  global.fetch = async (url, options) => {
+    captured = { url: String(url), options };
+    return new Response(null, { status: 200 });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const body = Buffer.from("normalized evidence test bytes");
+  await storage.putObject({
+    key: "evidence/507f1f77bcf86cd799439011/8cb9f8f8-9c75-4b9a-bd45-4cb0424e1e2c.jpg",
+    body,
+    contentType: "image/jpeg",
+  });
+
+  assert.equal(captured.options.method, "PUT");
+  assert.match(captured.url, /^https:\/\/example-account\.r2\.cloudflarestorage\.com\/attendance-private\/evidence\//);
+  assert.match(captured.options.headers.Authorization, /^AWS4-HMAC-SHA256 Credential=test-access-key\//);
+  assert.match(captured.options.headers.Authorization, /Signature=[a-f0-9]{64}$/);
+  assert.equal(
+    captured.options.headers["x-amz-content-sha256"],
+    storage._test.sha256(body),
+  );
+  assert.equal(captured.options.headers["content-type"], "image/jpeg");
+  assert.equal(captured.options.headers["x-amz-acl"], undefined);
 });
 
-test("uploads use the private Storage API without upsert and never expose the service key", async () => {
-    const calls = [];
-    const storage = createPrivateObjectStorage({
-        env,
-        fetchImpl: async (url, options) => {
-            calls.push({ url: String(url), options });
-            return jsonResponse(200, { Key: "stored" });
-        }
-    });
-
-    await storage.uploadObject(
-        "attendance-evidence/2026/10/abc.jpg",
-        Buffer.from("jpeg-bytes"),
-        "image/jpeg"
-    );
-
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].options.method, "POST");
-    assert.match(calls[0].url, /\/storage\/v1\/object\/attendance-evidence-private\/attendance-evidence\/2026\/10\/abc\.jpg$/);
-    assert.equal(calls[0].options.headers["content-type"], "image/jpeg");
-    assert.equal(calls[0].options.headers.Authorization, `Bearer ${env.SUPABASE_SERVICE_ROLE_KEY}`);
-    assert.equal(calls[0].options.headers["x-upsert"], undefined);
-    assert.ok(Buffer.isBuffer(calls[0].options.body));
+test("download URL is signed, expires quickly, and is not a public object URL", async (t) => {
+  setStorageEnvironment(t);
+  const urlText = await storage.createDownloadUrl({
+    key: "evidence/507f1f77bcf86cd799439011/8cb9f8f8-9c75-4b9a-bd45-4cb0424e1e2c.jpg",
+    expiresInSeconds: 60,
+  });
+  const url = new URL(urlText);
+  assert.equal(url.protocol, "https:");
+  assert.equal(url.searchParams.get("X-Amz-Algorithm"), "AWS4-HMAC-SHA256");
+  assert.equal(url.searchParams.get("X-Amz-Expires"), "60");
+  assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "host");
+  assert.match(url.searchParams.get("X-Amz-Signature"), /^[a-f0-9]{64}$/);
+  assert.match(url.searchParams.get("X-Amz-Credential"), /^test-access-key\/\d{8}\/auto\/s3\/aws4_request$/);
+  assert.equal(url.searchParams.has("X-Amz-Signature"), true);
+  await assert.rejects(
+    storage.createDownloadUrl({ key: "evidence/a/b.jpg", expiresInSeconds: 3600 }),
+    (error) => error.statusCode === 500,
+  );
 });
 
-test("signed URLs are short-lived and deletion only accepts evidence keys", async () => {
-    const calls = [];
-    const storage = createPrivateObjectStorage({
-        env,
-        fetchImpl: async (url, options) => {
-            calls.push({ url: String(url), options });
-            if (options.method === "POST") {
-                return jsonResponse(200, { signedURL: "/object/sign/attendance-evidence-private/attendance-evidence%2F2026%2F10%2Fabc.jpg?token=abc" });
-            }
-            return jsonResponse(200, { message: "deleted" });
-        }
-    });
+test("object deletion treats a missing object as an idempotent success", async (t) => {
+  setStorageEnvironment(t);
+  const originalFetch = global.fetch;
+  let captured;
+  global.fetch = async (url, options) => {
+    captured = { url: String(url), options };
+    return new Response(null, { status: 404 });
+  };
+  t.after(() => { global.fetch = originalFetch; });
 
-    const signed = await storage.createSignedUrl("attendance-evidence/2026/10/abc.jpg", 60);
-    assert.match(signed, /^https:\/\/project-ref\.supabase\.co\/storage\/v1\/object\/sign\//);
-    await assert.rejects(
-        () => storage.createSignedUrl("attendance-evidence/2026/10/abc.jpg", 3600),
-        /expiry/i
-    );
-
-    await storage.removeObjects(["attendance-evidence/2026/10/abc.jpg"]);
-    assert.equal(calls[1].options.method, "DELETE");
-    assert.deepEqual(JSON.parse(calls[1].options.body), {
-        prefixes: ["attendance-evidence/2026/10/abc.jpg"]
-    });
-    await assert.rejects(
-        () => storage.removeObjects(["unrelated-bucket-prefix/object.jpg"]),
-        /Invalid attendance evidence object key/
-    );
+  await storage.deleteObject({ key: "evidence/507f1f77bcf86cd799439011/8cb9f8f8-9c75-4b9a-bd45-4cb0424e1e2c.jpg" });
+  assert.equal(captured.options.method, "DELETE");
+  assert.match(captured.options.headers.Authorization, /Signature=[a-f0-9]{64}$/);
 });
 
-test("provider errors are sanitized and returned as retryable 503 errors", async () => {
-    const storage = createPrivateObjectStorage({
-        env,
-        fetchImpl: async () => ({
-            ok: false,
-            status: 500,
-            async text() { return "secret internal provider details"; }
-        })
-    });
+test("storage errors do not expose provider response bodies", async (t) => {
+  setStorageEnvironment(t);
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response("sensitive-provider-detail", { status: 403 });
+  t.after(() => { global.fetch = originalFetch; });
 
-    await assert.rejects(
-        () => storage.removeObjects(["attendance-evidence/2026/10/abc.jpg"]),
-        (error) => {
-            assert.equal(error.statusCode, 503);
-            assert.doesNotMatch(error.message, /secret internal/i);
-            return true;
-        }
-    );
+  await assert.rejects(
+    storage.putObject({ key: "evidence/a/b.jpg", body: Buffer.from("image"), contentType: "image/jpeg" }),
+    (error) => error.statusCode === 503 && !error.message.includes("sensitive-provider-detail"),
+  );
 });

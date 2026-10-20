@@ -17,7 +17,7 @@ const provider =
 exports.getMyEnrollment = async ({ userId }) => {
     const enrollment = await BiometricEnrollment.findOne({
         userId,
-        status: "ACTIVE"
+        status: { $in: ["ACTIVE", "DELETE_PENDING"] }
     }).select("status provider modelVersion enrolledAt lastVerifiedAt").lean();
     return enrollment || null;
 };
@@ -134,12 +134,17 @@ exports.enroll =
         const existing =
             await BiometricEnrollment.findOne({
                 userId,
-                status: "ACTIVE"
+                status: { $in: ["ACTIVE", "DELETE_PENDING"] }
             });
 
+        if (existing?.status === "DELETE_PENDING") {
+            throw new AppError(
+                "Biometric enrollment deletion is still pending; retry after provider cleanup completes",
+                409
+            );
+        }
 
-        if (existing) {
-
+        if (existing?.status === "ACTIVE") {
             throw new AppError(
                 "Biometric enrollment already exists",
                 409
@@ -883,4 +888,106 @@ exports.verifyActiveSequence = async ({ userId, sessionId, challengeId, challeng
         throw error;
     }
     return { verified: true, livenessPassed: true, faceMatchPassed: true, activeLivenessPassed: true, livenessMode: movement.version, similarity: result.similarity, verificationId: result.verificationId, assertionId };
+};
+
+
+/**
+ * Delete the active biometric enrollment from the provider. We first mark it
+ * DELETE_PENDING so attendance stops using it even if provider deletion fails.
+ * The periodic sweeper retries pending deletions until the provider confirms
+ * deletion (a provider 404 is treated as already deleted).
+ */
+exports.revokeEnrollment = async ({ userId }) => {
+    const enrollment = await BiometricEnrollment.findOne({
+        userId,
+        status: { $in: ["ACTIVE", "DELETE_PENDING"] }
+    });
+
+    if (!enrollment) {
+        return { status: "REVOKED", alreadyDeleted: true };
+    }
+
+    if (enrollment.status === "ACTIVE") {
+        await BiometricEnrollment.updateOne(
+            { _id: enrollment._id, status: "ACTIVE" },
+            { $set: { status: "DELETE_PENDING", revokedAt: new Date() } }
+        );
+    }
+
+    try {
+        await provider.deletePerson({ providerUserId: enrollment.providerUserId });
+    } catch {
+        // Do not claim deletion. The scheduled sweeper will retry this record.
+        throw new AppError(
+            "Biometric deletion is pending because the provider is unavailable",
+            503
+        );
+    }
+
+    await BiometricEnrollment.updateOne(
+        { _id: enrollment._id, status: "DELETE_PENDING" },
+        { $set: { status: "REVOKED", revokedAt: new Date() } }
+    );
+
+    try {
+        const AuditEvent = require("../../models/AuditEvent.model");
+        await AuditEvent.create({
+            event: "BIOMETRIC_ENROLLMENT_DELETED",
+            userId,
+            metadata: { provider: enrollment.provider, modelVersion: enrollment.modelVersion }
+        });
+    } catch (error) {
+        console.error("Biometric deletion audit event failed", {
+            errorName: error?.name || "Error"
+        });
+    }
+
+    return { status: "REVOKED", alreadyDeleted: false };
+};
+
+exports.sweepPendingBiometricDeletes = async ({ limit = 10 } = {}) => {
+    const boundedLimit = Math.max(1, Math.min(Number(limit) || 10, 50));
+    const pending = await BiometricEnrollment.find({
+        status: "DELETE_PENDING"
+    })
+        .select("userId provider providerUserId modelVersion")
+        .sort({ updatedAt: 1 })
+        .limit(boundedLimit)
+        .lean();
+
+    const result = { scanned: pending.length, deleted: 0, failed: 0 };
+    for (const enrollment of pending) {
+        try {
+            await provider.deletePerson({ providerUserId: enrollment.providerUserId });
+            const update = await BiometricEnrollment.updateOne(
+                { userId: enrollment.userId, status: "DELETE_PENDING" },
+                { $set: { status: "REVOKED", revokedAt: new Date() } }
+            );
+            if (update.modifiedCount === 1) {
+                try {
+                    const AuditEvent = require("../../models/AuditEvent.model");
+                    await AuditEvent.create({
+                        event: "BIOMETRIC_ENROLLMENT_DELETED",
+                        userId: enrollment.userId,
+                        metadata: {
+                            provider: enrollment.provider,
+                            modelVersion: enrollment.modelVersion,
+                            reason: "PENDING_DELETE_RETRY"
+                        }
+                    });
+                } catch (error) {
+                    console.error("Biometric deletion audit event failed", {
+                        errorName: error?.name || "Error"
+                    });
+                }
+                result.deleted += 1;
+            }
+        } catch (error) {
+            result.failed += 1;
+            console.error("Pending biometric deletion retry failed", {
+                errorName: error?.name || "Error"
+            });
+        }
+    }
+    return result;
 };

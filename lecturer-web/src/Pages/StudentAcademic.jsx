@@ -3,11 +3,14 @@ import { Html5Qrcode } from "html5-qrcode";
 import {
   enrollBiometric,
   getMyBiometricEnrollment,
+  deleteMyBiometricEnrollment,
 } from "../services/biometric.service";
+import ActiveLivenessCapture from "../components/ActiveLivenessCapture";
 import {
   getAvailableAttendanceSessions,
   getMyAttendanceRecords,
   markAttendance,
+  getCurrentLocation,
 } from "../services/attendance.service";
 import {
   hasRegisteredDeviceKey,
@@ -48,11 +51,14 @@ function StudentAcademic() {
   const { user } = useAuth();
   const [deviceReady, setDeviceReady] = useState(false);
   const [biometricReady, setBiometricReady] = useState(false);
+  const [biometricDeletePending, setBiometricDeletePending] = useState(false);
+  const [biometricAssertionId, setBiometricAssertionId] = useState("");
+  const [locationEvidence, setLocationEvidence] = useState(null);
+  const [locationBusy, setLocationBusy] = useState(false);
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [attendanceBusy, setAttendanceBusy] = useState(false);
   const [enrollmentImage, setEnrollmentImage] = useState(null);
-  const [verificationImage, setVerificationImage] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [attendanceToken, setAttendanceToken] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -92,7 +98,15 @@ function StudentAcademic() {
                   device.deviceId,
             ),
           );
-          setBiometricReady(Boolean(biometricResponse.data.data));
+          const biometricEnrollment = biometricResponse.data.data;
+          setBiometricReady(biometricEnrollment?.status === "ACTIVE");
+          setBiometricDeletePending(biometricEnrollment?.status === "DELETE_PENDING");
+          if (biometricEnrollment?.status === "DELETE_PENDING") {
+            setNotice({
+              type: "error",
+              text: "Biometric deletion is pending provider cleanup. Attendance remains disabled until that cleanup finishes.",
+            });
+          }
           setSections(sectionResponse.data.data || []);
           setRecords(recordResponse.data.data || []);
           setAvailableSessions(sessionResponse.data.data || []);
@@ -122,9 +136,16 @@ function StudentAcademic() {
 
   const startScan = async () => {
     setNotice(null);
+    if (!sessionId || !biometricAssertionId || !locationEvidence) {
+      setNotice({
+        type: "error",
+        text: "Select a session, complete active liveness, and get a location reading before scanning the QR.",
+      });
+      return;
+    }
     setAttendanceToken("");
-    setSessionId("");
     idempotencyKeyRef.current = null;
+    const expectedSessionId = sessionId;
     try {
       const scanner = new Html5Qrcode("student-qr-reader");
       scannerRef.current = scanner;
@@ -135,12 +156,14 @@ function StudentAcademic() {
           try {
             const token = getQrToken(text);
             const sid = decodeSessionId(token);
+            if (sid !== expectedSessionId) {
+              throw new Error("This QR belongs to a different session. Scan the QR for the session you selected.");
+            }
             setAttendanceToken(token);
-            setSessionId(sid);
             idempotencyKeyRef.current = crypto.randomUUID();
             setNotice({
               type: "success",
-              text: "Active attendance QR scanned. Complete the check-in steps below.",
+              text: "Fresh QR captured. Submit attendance now.",
             });
             if (scanner.isScanning) await scanner.stop().catch(() => {});
             setScanning(false);
@@ -244,6 +267,7 @@ function StudentAcademic() {
     try {
       await enrollBiometric(enrollmentImage);
       setBiometricReady(true);
+      setBiometricDeletePending(false);
       setNotice({ type: "success", text: "Face enrollment completed." });
     } catch (error) {
       const message =
@@ -252,6 +276,7 @@ function StudentAcademic() {
         "Face enrollment failed.";
       if (error.response?.status === 409 && /already exists/i.test(message)) {
         setBiometricReady(true);
+        setBiometricDeletePending(false);
         setNotice({
           type: "success",
           text: "A face enrollment already exists for this account.",
@@ -259,6 +284,94 @@ function StudentAcademic() {
       } else setNotice({ type: "error", text: message });
     } finally {
       setBiometricBusy(false);
+    }
+  };
+
+
+  const removeBiometricEnrollment = async () => {
+    if (!window.confirm("Delete your enrolled face data from the biometric provider?")) return;
+    setBiometricBusy(true);
+    setNotice(null);
+    try {
+      const response = await deleteMyBiometricEnrollment();
+      setBiometricReady(false);
+      setBiometricDeletePending(false);
+      setBiometricAssertionId("");
+      setAttendanceToken("");
+      setLocationEvidence(null);
+      idempotencyKeyRef.current = null;
+      setNotice({
+        type: "success",
+        text: response.data?.data?.alreadyDeleted
+          ? "No active biometric enrollment remained."
+          : "Biometric enrollment deletion completed.",
+      });
+    } catch (error) {
+      const message = error.response?.data?.error?.message || "Could not finish biometric deletion.";
+      if (error.response?.status === 503 && /pending/i.test(message)) {
+        setBiometricReady(false);
+        setBiometricDeletePending(true);
+        setBiometricAssertionId("");
+        setAttendanceToken("");
+        setLocationEvidence(null);
+        idempotencyKeyRef.current = null;
+        setNotice({
+          type: "error",
+          text: "Biometric deletion is pending because the provider is unavailable. Attendance is disabled; the backend will retry deletion.",
+        });
+      } else {
+        setNotice({ type: "error", text: message });
+      }
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
+
+
+  const refreshBiometricStatus = async () => {
+    setBiometricBusy(true);
+    setNotice(null);
+    try {
+      const response = await getMyBiometricEnrollment();
+      const enrollment = response.data.data;
+      setBiometricReady(enrollment?.status === "ACTIVE");
+      setBiometricDeletePending(enrollment?.status === "DELETE_PENDING");
+      setNotice({
+        type: enrollment?.status === "DELETE_PENDING" ? "error" : "success",
+        text: enrollment?.status === "DELETE_PENDING"
+          ? "The provider is still deleting this enrollment. Try refreshing again shortly."
+          : enrollment?.status === "ACTIVE"
+            ? "Biometric enrollment is active."
+            : "No active enrollment remains. You can enroll again.",
+      });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error.response?.data?.error?.message || "Could not refresh biometric status.",
+      });
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
+
+  const prepareLocation = async () => {
+    setLocationBusy(true);
+    setNotice(null);
+    try {
+      const evidence = await getCurrentLocation();
+      setLocationEvidence(evidence);
+      setNotice({
+        type: "success",
+        text: "Location captured. Scan the selected session's current QR immediately afterward.",
+      });
+    } catch (error) {
+      setLocationEvidence(null);
+      setNotice({
+        type: "error",
+        text: error.message || "Could not capture location. Check browser permission and try again.",
+      });
+    } finally {
+      setLocationBusy(false);
     }
   };
 
@@ -270,7 +383,8 @@ function StudentAcademic() {
         userId: user.id,
         sessionId,
         token: attendanceToken,
-        verificationImage,
+        biometricAssertionId,
+        locationEvidence,
         idempotencyKey: idempotencyKeyRef.current,
       });
       setNotice({
@@ -281,6 +395,8 @@ function StudentAcademic() {
       setRecords(recordsResponse.data.data || []);
       setAttendanceToken("");
       setSessionId("");
+      setBiometricAssertionId("");
+      setLocationEvidence(null);
       idempotencyKeyRef.current = null;
     } catch (error) {
       setNotice({
@@ -375,6 +491,24 @@ function StudentAcademic() {
                   Started {new Date(item.startedAt).toLocaleTimeString()} ·
                   Expires {new Date(item.expiresAt).toLocaleTimeString()}
                 </span>
+                <button
+                  type="button"
+                  className="academic-button secondary"
+                  disabled={attendanceBusy}
+                  onClick={() => {
+                    setSessionId(item.sessionId);
+                    setAttendanceToken("");
+                    setBiometricAssertionId("");
+                    setLocationEvidence(null);
+                    idempotencyKeyRef.current = null;
+                    setNotice({
+                      type: "success",
+                      text: "Session selected. Complete active liveness and location preflight before scanning the fresh QR.",
+                    });
+                  }}
+                >
+                  {sessionId === item.sessionId ? "Selected session" : "Select session"}
+                </button>
               </article>
             ))
           ) : (
@@ -470,7 +604,9 @@ function StudentAcademic() {
                 <span>
                   {biometricReady
                     ? "Face enrollment is ready"
-                    : "Choose a clear face photo for enrollment"}
+                    : biometricDeletePending
+                      ? "Deletion pending with biometric provider"
+                      : "Choose a clear face photo for enrollment"}
                 </span>
               </label>
               <input
@@ -481,15 +617,35 @@ function StudentAcademic() {
                 onChange={(event) =>
                   setEnrollmentImage(event.target.files?.[0] || null)
                 }
-                disabled={biometricReady}
+                disabled={biometricReady || biometricDeletePending}
               />
-              {!biometricReady && (
+              {!biometricReady && !biometricDeletePending && (
                 <button
                   className="academic-button"
                   type="submit"
                   disabled={!enrollmentImage || biometricBusy}
                 >
                   {biometricBusy ? "Enrolling…" : "Enroll face"}
+                </button>
+              )}
+              {biometricReady && (
+                <button
+                  className="academic-button secondary"
+                  type="button"
+                  onClick={removeBiometricEnrollment}
+                  disabled={biometricBusy}
+                >
+                  {biometricBusy ? "Deleting…" : "Delete face enrollment"}
+                </button>
+              )}
+              {biometricDeletePending && (
+                <button
+                  className="academic-button secondary"
+                  type="button"
+                  onClick={refreshBiometricStatus}
+                  disabled={biometricBusy}
+                >
+                  {biometricBusy ? "Checking…" : "Refresh deletion status"}
                 </button>
               )}
             </form>
@@ -501,9 +657,54 @@ function StudentAcademic() {
           </p>
         </section>
 
+        {sessionId && (
+          <section className="academic-card student-setup-card">
+            <div className="academic-card-title">
+              <span className="academic-step">02</span>
+              <div>
+                <h2>Prepare your check-in</h2>
+                <p>
+                  Selected session {sessionId.slice(0, 8)}. Complete the camera challenge and get location before scanning the short-lived QR.
+                </p>
+              </div>
+            </div>
+            <ActiveLivenessCapture
+              sessionId={sessionId}
+              disabled={!deviceReady || !biometricReady || attendanceBusy}
+              onVerified={(assertionId) => {
+                setBiometricAssertionId(assertionId);
+                setAttendanceToken("");
+                setLocationEvidence(null);
+                idempotencyKeyRef.current = null;
+                setNotice({
+                  type: "success",
+                  text: "Active liveness passed. Get location, then scan a fresh QR for this session.",
+                });
+              }}
+            />
+            <button
+              type="button"
+              className="academic-button secondary"
+              onClick={prepareLocation}
+              disabled={!biometricAssertionId || locationBusy || attendanceBusy}
+            >
+              {locationBusy
+                ? "Getting location…"
+                : locationEvidence
+                  ? "Refresh location"
+                  : "Get current location"}
+            </button>
+            {locationEvidence && (
+              <p className="academic-footnote">
+                Accuracy: {Math.round(locationEvidence.accuracyMeters)} m · Captured {new Date(locationEvidence.capturedAt).toLocaleTimeString()}
+              </p>
+            )}
+          </section>
+        )}
+
         <section className="academic-card student-scan-card">
           <div className="academic-card-title">
-            <span className="academic-step">02</span>
+            <span className="academic-step">03</span>
             <div>
               <h2>Scan the lecturer’s QR</h2>
               <p>
@@ -513,7 +714,11 @@ function StudentAcademic() {
           </div>
           <div id="student-qr-reader" className="student-qr-reader" />
           {!scanning ? (
-            <button className="academic-button" onClick={startScan}>
+            <button
+              className="academic-button"
+              onClick={startScan}
+              disabled={!sessionId || !biometricAssertionId || !locationEvidence || attendanceBusy}
+            >
               {attendanceToken ? "Scan a different QR" : "Open camera and scan"}
             </button>
           ) : (
@@ -530,21 +735,11 @@ function StudentAcademic() {
               <p className="academic-eyebrow">
                 QR SCANNED · SESSION {sessionId.slice(0, 8)}
               </p>
-              <label className="academic-field">
-                <span>Take a fresh face photo for verification</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  capture="user"
-                  onChange={(event) =>
-                    setVerificationImage(event.target.files?.[0] || null)
-                  }
-                />
-                <small>
-                  The backend checks face match and liveness during attendance
-                  verification.
-                </small>
-              </label>
+              <p className="academic-footnote">
+                {biometricAssertionId && locationEvidence
+                  ? "Ready. Submit this fresh QR now."
+                  : "Complete the preparation steps above, then scan a fresh QR and submit immediately."}
+              </p>
               <button
                 className="academic-button"
                 onClick={submitAttendance}
@@ -552,19 +747,13 @@ function StudentAcademic() {
                   attendanceBusy ||
                   !deviceReady ||
                   !biometricReady ||
-                  !verificationImage
+                  !biometricAssertionId ||
+                  !locationEvidence ||
+                  !attendanceToken
                 }
               >
-                {attendanceBusy
-                  ? "Verifying check-in…"
-                  : "Verify and mark attendance"}
+                {attendanceBusy ? "Submitting…" : "Submit attendance"}
               </button>
-              {(!deviceReady || !biometricReady || !verificationImage) && (
-                <p className="academic-footnote">
-                  Finish device registration, face enrollment, and the fresh
-                  verification photo to enable check-in.
-                </p>
-              )}
             </div>
           )}
         </section>
