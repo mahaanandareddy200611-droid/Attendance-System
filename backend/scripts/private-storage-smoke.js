@@ -13,7 +13,12 @@ async function main() {
 
   const endpoint = new URL(endpointValue);
   const key = "smoke-tests/" + crypto.randomUUID() + ".bin";
-  const payload = Buffer.from("private-storage-round-trip-" + crypto.randomUUID(), "utf8");
+  // A real 1x1 JPEG, so the smoke test exercises an image content type
+  // rather than uploading text while claiming it is an image.
+  const payload = Buffer.from(
+    "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAP//////////////////////////////////////////////////////////////////////////////////////2wBDAf//////////////////////////////////////////////////////////////////////////////////////wAARCAABAAEDASIAAhEBAxEB/8QAFQABAQAAAAAAAAAAAAAAAAAAAAX/xAAUEAEAAAAAAAAAAAAAAAAAAAAA/9oADAMBAAIQAxAAAAF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABBQJ//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAwEBPwF//8QAFBEBAAAAAAAAAAAAAAAAAAAAAP/aAAgBAgEBPwF//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQAGPwJ//8QAFBABAAAAAAAAAAAAAAAAAAAAAP/aAAgBAQABPyF//9k=",
+    "base64",
+  );
   const rawUrl = new URL("/" + encodeURIComponent(bucket) + "/" + key.split("/").map(encodeURIComponent).join("/"), endpoint.origin);
   let uploaded = false;
 
