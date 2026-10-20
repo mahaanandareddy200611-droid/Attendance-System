@@ -628,7 +628,7 @@ export default function CheckInScreen() {
         {selectedSession && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Check in: {selectedSession.courseCode || "Course"} · {selectedSession.section || "Section"}</Text>
-            <Text style={styles.subtitle}>Prepare location first. Complete the server's randomized center/left/right camera sequence. Once it passes, the QR scanner opens and submits automatically after reading the selected session's fresh QR.</Text>
+            <Text style={styles.subtitle}>Prepare location first. Complete the server&apos;s randomized center/left/right camera sequence. Once it passes, the QR scanner opens and submits automatically after reading the selected session&apos;s fresh QR.</Text>
             <Pressable
               style={styles.secondaryButton}
               disabled={busy}
@@ -709,7 +709,7 @@ export default function CheckInScreen() {
               </View>
             ) : cameraMode === "scan" ? (
               <View style={styles.cameraActions}>
-                <Text style={styles.cardTitle}>Scan the lecturer's current QR</Text>
+                <Text style={styles.cardTitle}>Scan the lecturer&apos;s current QR</Text>
                 <Text style={styles.muted}>Keep the code inside the frame. When decoded, the app signs and submits immediately—no extra confirmation tap consumes the QR freshness window.</Text>
               </View>
             ) : null}
