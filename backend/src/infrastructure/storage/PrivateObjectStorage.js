@@ -17,12 +17,12 @@ function awsEncode(value) {
   );
 }
 
-function getConfiguration() {
-  const endpointValue = process.env.OBJECT_STORAGE_ENDPOINT;
-  const bucket = process.env.OBJECT_STORAGE_BUCKET;
-  const accessKeyId = process.env.OBJECT_STORAGE_ACCESS_KEY_ID;
-  const secretAccessKey = process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY;
-  const region = process.env.OBJECT_STORAGE_REGION || "auto";
+function getConfiguration(env = process.env) {
+  const endpointValue = env.OBJECT_STORAGE_ENDPOINT;
+  const bucket = env.OBJECT_STORAGE_BUCKET;
+  const accessKeyId = env.OBJECT_STORAGE_ACCESS_KEY_ID;
+  const secretAccessKey = env.OBJECT_STORAGE_SECRET_ACCESS_KEY;
+  const region = env.OBJECT_STORAGE_REGION || "auto";
 
   if (!endpointValue || !bucket || !accessKeyId || !secretAccessKey) {
     throw new AppError("Private object storage is not configured", 503);
@@ -175,6 +175,8 @@ exports.putObject = async ({ key, body, contentType = "image/jpeg" }) => {
   }
   await requestSigned({ method: "PUT", key, body, contentType });
 };
+
+exports.getConfiguration = getConfiguration;
 
 exports.deleteObject = async ({ key }) => {
   await requestSigned({ method: "DELETE", key });
