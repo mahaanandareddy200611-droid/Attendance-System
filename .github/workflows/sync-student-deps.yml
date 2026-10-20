@@ -1,9 +1,11 @@
 name: Sync Student Expo Dependencies
+# One-time lockfile reconciliation workflow reused while hardening a release branch.
 
 on:
   push:
     branches:
       - fix/attendance-frontend-contracts
+      - fix/deploy-blockers-evidence-storage
     paths:
       - "student-app/package.json"
       - ".github/workflows/sync-student-deps.yml"

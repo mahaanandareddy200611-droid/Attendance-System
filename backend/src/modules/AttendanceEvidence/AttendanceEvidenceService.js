@@ -5,7 +5,16 @@ const mongoose = require("mongoose");
 const AttendanceEvidence = require("../../models/AttendanceEvidence.model");
 const AttendanceRecord = require("../../models/AttendanceRecord.model");
 const AppError = require("../../utils/AppError");
-const { defaultStorage } = require("./PrivateObjectStorage");
+const objectStorage = require("../../infrastructure/storage/PrivateObjectStorage");
+
+const defaultStorage = {
+    uploadObject: (key, buffer, contentType) =>
+        objectStorage.putObject({ key, body: buffer, contentType }),
+    removeObjects: async (keys) =>
+        Promise.all(keys.map((key) => objectStorage.deleteObject({ key }))),
+    createSignedUrl: (key, expiresInSeconds) =>
+        objectStorage.createDownloadUrl({ key, expiresInSeconds })
+};
 
 const CONSENT_VERSION = "attendance-evidence-v1";
 const DEFAULT_RETENTION_DAYS = 7;
@@ -68,14 +77,16 @@ function createAttendanceEvidenceService({
         // The metadata is changed to DELETE_PENDING before calling Storage so
         // signed-url issuance is blocked even if the provider is temporarily down.
         if (doc.status !== "DELETE_PENDING") {
-            await evidenceModel.updateOne(
-                { _id: doc._id, status: { $in: ["ACTIVE", "PENDING_UPLOAD"] } },
+            const claimed = await evidenceModel.updateOne(
+                { _id: doc._id, status: doc.status },
                 { $set: { status: "DELETE_PENDING", deletionReason: reason } }
             );
+            if (claimed.modifiedCount !== 1) return false;
         }
 
         await storage.removeObjects([doc.objectKey]);
         await markDeleted(doc._id, reason);
+        return true;
     }
 
     async function upload({
@@ -104,6 +115,10 @@ function createAttendanceEvidenceService({
             throw new AppError("A normalized JPEG image no larger than 2 MiB is required", 400);
         }
 
+        const storageConfig = storage === defaultStorage
+            ? objectStorage.getConfiguration(env)
+            : { bucket: String(env.OBJECT_STORAGE_BUCKET || "test-bucket") };
+
         const attendance = await attendanceRecordModel.findOne({
             _id: attendanceRecordId,
             studentId
@@ -125,7 +140,7 @@ function createAttendanceEvidenceService({
                 studentId,
                 attendanceRecordId,
                 objectKey,
-                bucket: String(env.SUPABASE_STORAGE_BUCKET || "attendance-evidence-private"),
+                bucket: storageConfig.bucket,
                 mimeType: "image/jpeg",
                 size: imageBuffer.length,
                 status: "PENDING_UPLOAD",
@@ -245,8 +260,8 @@ function createAttendanceEvidenceService({
             );
 
             try {
-                await deleteRemoteThenFinalize(doc, reason);
-                deleted += 1;
+                const finalized = await deleteRemoteThenFinalize(doc, reason);
+                if (finalized) deleted += 1;
             } catch {
                 // Do not log student/object identifiers. The next scheduled run retries.
                 failed += 1;
@@ -256,64 +271,9 @@ function createAttendanceEvidenceService({
         return { examined: candidates.length, deleted, failed };
     }
 
-    async function cleanupOrphanedObjects({
-        graceHours = Number(env.ATTENDANCE_EVIDENCE_ORPHAN_GRACE_HOURS) || 48,
-        maxObjects = 5000
-    } = {}) {
-        if (env.ATTENDANCE_EVIDENCE_ORPHAN_CLEANUP_ENABLED !== "true") {
-            return { examined: 0, deleted: 0, skipped: true };
-        }
-        if (!Number.isFinite(graceHours) || graceHours < 24 || graceHours > 720) {
-            throw new TypeError("Orphan cleanup grace must be between 24 and 720 hours");
-        }
-
-        const cutoff = clock().getTime() - graceHours * 60 * 60 * 1000;
-        const objects = await storage.listEvidenceObjects({ maxObjects });
-        const candidates = objects.filter((item) => {
-            const createdAt = Date.parse(item.createdAt || "");
-            return (
-                typeof item.objectKey === "string" &&
-                item.objectKey.startsWith(OBJECT_PREFIX) &&
-                Number.isFinite(createdAt) &&
-                createdAt <= cutoff
-            );
-        });
-
-        const known = candidates.length
-            ? await evidenceModel.find({
-                objectKey: { $in: candidates.map((item) => item.objectKey) },
-                status: { $ne: "DELETED" }
-            }).select("objectKey").lean()
-            : [];
-        const knownKeys = new Set(known.map((item) => item.objectKey));
-        const orphanKeys = candidates
-            .filter((item) => !knownKeys.has(item.objectKey))
-            .map((item) => item.objectKey);
-
-        let deleted = 0;
-        let failed = 0;
-        for (let index = 0; index < orphanKeys.length; index += 100) {
-            const batch = orphanKeys.slice(index, index + 100);
-            try {
-                await storage.removeObjects(batch);
-                deleted += batch.length;
-            } catch {
-                failed += batch.length;
-            }
-        }
-
-        return { examined: objects.length, deleted, failed, skipped: false };
-    }
-
     async function runMaintenance() {
         const retention = await cleanupExpiredEvidence();
-        let orphans;
-        try {
-            orphans = await cleanupOrphanedObjects();
-        } catch {
-            orphans = { examined: 0, deleted: 0, failed: 1, skipped: false };
-        }
-        return { retention, orphans };
+        return { retention };
     }
 
     return {
@@ -321,7 +281,6 @@ function createAttendanceEvidenceService({
         createDownloadUrl,
         deleteEvidence,
         cleanupExpiredEvidence,
-        cleanupOrphanedObjects,
         runMaintenance
     };
 }
