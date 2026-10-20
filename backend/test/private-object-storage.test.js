@@ -101,7 +101,10 @@ test("signed URLs are short-lived and deletion only accepts evidence keys", asyn
 
     const signed = await storage.createSignedUrl("attendance-evidence/2026/10/abc.jpg", 60);
     assert.match(signed, /^https:\/\/project-ref\.supabase\.co\/storage\/v1\/object\/sign\//);
-    assert.throws(() => storage.createSignedUrl("attendance-evidence/2026/10/abc.jpg", 3600), /expiry/i);
+    await assert.rejects(
+        () => storage.createSignedUrl("attendance-evidence/2026/10/abc.jpg", 3600),
+        /expiry/i
+    );
 
     await storage.removeObjects(["attendance-evidence/2026/10/abc.jpg"]);
     assert.equal(calls[1].options.method, "DELETE");
