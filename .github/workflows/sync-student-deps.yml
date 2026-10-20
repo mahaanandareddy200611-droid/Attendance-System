@@ -1,4 +1,5 @@
 name: Sync Student Expo Dependencies
+# One-time lockfile reconciliation workflow reused while hardening a release branch.
 
 on:
   push:
