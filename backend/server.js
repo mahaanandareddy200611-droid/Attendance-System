@@ -20,6 +20,7 @@ const {
 } = require("./src/socket/socket");
 
 const { expireExpiredSessions } = require("./src/modules/Attendance/AttendanceService");
+const { sweepExpiredMediaAssets } = require("./src/modules/Media/MediaService");
 
 const mongoose =
     require("mongoose");
@@ -40,6 +41,10 @@ const runExpirationSweep = async () => {
         const expiredSessionIds = await expireExpiredSessions();
         if (expiredSessionIds.length > 0) {
             console.info("Expired attendance sessions finalized", { count: expiredSessionIds.length });
+        }
+        const mediaCleanup = await sweepExpiredMediaAssets({ limit: 25 });
+        if (mediaCleanup.deleted > 0 || mediaCleanup.failed > 0) {
+            console.info("Retained media cleanup cycle completed", mediaCleanup);
         }
     } catch (error) {
         // Do not emit database details or student identifiers into routine logs.
