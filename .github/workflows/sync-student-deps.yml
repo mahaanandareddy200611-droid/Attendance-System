@@ -37,7 +37,7 @@ jobs:
         run: npm ci
       - name: Resolve Expo SDK-compatible native modules
         working-directory: student-app
-        run: npx expo install expo-camera expo-location expo-secure-store expo-crypto
+        run: npx expo install expo-camera expo-location expo-secure-store expo-crypto expo-file-system
       - name: Refresh final lockfile
         working-directory: student-app
         run: npm install --package-lock-only --ignore-scripts
