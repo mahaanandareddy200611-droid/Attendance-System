@@ -77,14 +77,16 @@ function createAttendanceEvidenceService({
         // The metadata is changed to DELETE_PENDING before calling Storage so
         // signed-url issuance is blocked even if the provider is temporarily down.
         if (doc.status !== "DELETE_PENDING") {
-            await evidenceModel.updateOne(
-                { _id: doc._id, status: { $in: ["ACTIVE", "PENDING_UPLOAD"] } },
+            const claimed = await evidenceModel.updateOne(
+                { _id: doc._id, status: doc.status },
                 { $set: { status: "DELETE_PENDING", deletionReason: reason } }
             );
+            if (claimed.modifiedCount !== 1) return false;
         }
 
         await storage.removeObjects([doc.objectKey]);
         await markDeleted(doc._id, reason);
+        return true;
     }
 
     async function upload({
@@ -113,6 +115,10 @@ function createAttendanceEvidenceService({
             throw new AppError("A normalized JPEG image no larger than 2 MiB is required", 400);
         }
 
+        const storageConfig = storage === defaultStorage
+            ? objectStorage.getConfiguration(env)
+            : { bucket: String(env.OBJECT_STORAGE_BUCKET || "test-bucket") };
+
         const attendance = await attendanceRecordModel.findOne({
             _id: attendanceRecordId,
             studentId
@@ -134,7 +140,7 @@ function createAttendanceEvidenceService({
                 studentId,
                 attendanceRecordId,
                 objectKey,
-                bucket: String(env.OBJECT_STORAGE_BUCKET || ""),
+                bucket: storageConfig.bucket,
                 mimeType: "image/jpeg",
                 size: imageBuffer.length,
                 status: "PENDING_UPLOAD",
@@ -254,8 +260,8 @@ function createAttendanceEvidenceService({
             );
 
             try {
-                await deleteRemoteThenFinalize(doc, reason);
-                deleted += 1;
+                const finalized = await deleteRemoteThenFinalize(doc, reason);
+                if (finalized) deleted += 1;
             } catch {
                 // Do not log student/object identifiers. The next scheduled run retries.
                 failed += 1;
