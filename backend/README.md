@@ -9,33 +9,14 @@
 The lecturer web client uses `lecturer-web/.env.example`. The Expo client uses `student-app/.env.example`; on Android emulators, use `10.0.2.2` to reach the host machine.
 
 
-## Private retained evidence storage
+## Optional private attendance evidence
 
-Retained evidence images use a private S3-compatible bucket (for example, Cloudflare R2). Configure these values in your ignored local `.env` file or the deployment provider's secret environment settings:
+Attendance evidence retention is separate from biometric verification. Enrollment and active-liveness frames are processed in memory and are not retained by this feature. A student may upload one normalized JPEG as corroborative evidence for an attendance record that belongs to them, only after explicitly accepting the versioned retention notice. Retention defaults to 7 days and is configurable from 1 to 30 days.
 
-- `OBJECT_STORAGE_ENDPOINT`: the S3 API endpoint origin, such as `https://<account-id>.r2.cloudflarestorage.com` (do not add the bucket or key path).
-- `OBJECT_STORAGE_BUCKET`: the private bucket name.
-- `OBJECT_STORAGE_REGION=auto` for R2; use the region specified by the provider for other S3-compatible storage.
-- `OBJECT_STORAGE_ACCESS_KEY_ID` and `OBJECT_STORAGE_SECRET_ACCESS_KEY`: a dedicated least-privilege key with access only to this bucket.
-- Optional: `OBJECT_STORAGE_TIMEOUT_MS=10000`, `MEDIA_RETENTION_DAYS=30`, and `MEDIA_URL_TTL_SECONDS=60`.
+1. Create a **private** Supabase Storage bucket named `attendance-evidence-private` (or set `SUPABASE_STORAGE_BUCKET`). Do not create a public bucket or enable public object URLs.
+2. Configure `SUPABASE_URL` and `SUPABASE_SERVICE_ROLE_KEY` as backend-only secrets. Never put the service-role key in either frontend's environment.
+3. Configure `ATTENDANCE_EVIDENCE_RETENTION_DAYS` and review your institution's consent, access, retention, and deletion policy before enabling collection.
+4. The student API is `POST /api/v1/attendance-evidence` as multipart form data: `image`, `attendanceRecordId`, `retentionConsent=true`, and `consentVersion=attendance-evidence-v1`. Authenticated students can request a 60-second signed URL at `GET /api/v1/attendance-evidence/:evidenceId/signed-url` and request deletion at `DELETE /api/v1/attendance-evidence/:evidenceId`.
+5. Run `npm run evidence:cleanup` from a scheduler at least daily. It retries expired/pending deletions. Orphan cleanup is disabled by default; enable it only after verifying the bucket contains exclusively this application's `attendance-evidence/` namespace. It uses a 48-hour grace period by default.
 
-Do not enable public bucket access or commit any credentials. The media API stores a metadata record in MongoDB before uploading the object, so interrupted uploads are discoverable and the cleanup sweep can retry deleting pending or expired objects.
-
-- `POST /api/v1/media/evidence`: authenticated Lecturer/Admin multipart field `image` plus `sessionId`.
-- `GET /api/v1/media/session/:sessionId`: list active retained evidence for a session the lecturer owns (or an administrator can access).
-- `GET /api/v1/media/:assetId/url`: issue a short-lived signed download URL after authorization.
-- `DELETE /api/v1/media/:assetId`: delete the object and record its deletion state.
-
-Run `npm run storage:smoke` from `backend` after configuring a real private test bucket. The check uploads a temporary object, verifies an unsigned GET is denied, verifies a signed GET returns the exact bytes, and deletes the object. It intentionally fails if the bucket exposes an object publicly. This live storage check is separate from the mock-based unit tests.
-
-Face enrollment is stored by the configured biometric provider; live verification/liveness frames are processed in memory and are not retained as evidence by the application. `DELETE /api/v1/biometric/me` requests provider-side person/face/embedding deletion and marks the local enrollment as `DELETE_PENDING` if the provider is unavailable. The periodic cleanup task retries pending deletion until the provider confirms deletion. Do not state deletion is complete while this operation remains pending.
-
-## Active face/liveness flow
-
-The student web client uses `POST /api/v1/biometric/challenge-active` to obtain a server-randomized center/left/right sequence and `POST /api/v1/biometric/verify-active` to submit three camera frames. The provider is expected to evaluate face detection and passive presentation-attack/liveness signals for each frame; the backend validates landmark movement and face identity before issuing a short-lived, session-bound assertion.
-
-This layered sequence is a demo-grade control, not certified anti-spoofing. Test a consenting user, a different person, poor lighting, replay/printed-photo attempts, expired challenges, and provider outages. The public InsightFace `buffalo_l` pretrained model has non-commercial/research licensing terms in the currently reviewed license metadata; obtain an appropriate license or choose a suitably licensed model before any institutional/commercial deployment.
-
-## Frontend/build checks
-
-The lecturer web frontend is built and linted by `.github/workflows/frontend-ci.yml`. The Expo student app's web bundle is exported as a basic CI check; that check is not a substitute for a native Android/iOS device build or camera/key-storage validation.
+The API stores object metadata in MongoDB, never image bytes. A remote delete failure leaves metadata in `DELETE_PENDING` so signed-URL issuance stays blocked and cleanup can retry. Signed URLs are bearer links: keep them private and never log or persist them. Storage provider access, consent language, institutional policy, and live deletion behavior still require staging verification.

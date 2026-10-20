@@ -12,6 +12,7 @@ const DeviceRoutes = require("./modules/Device/DeviceRoutes");
 const BiometricRoutes = require("./modules/Biometric/BiometricRoutes");
 const AttendanceRoutes = require("./modules/Attendance/AttendanceRouter");
 const MediaRoutes = require("./modules/Media/MediaRoutes");
+const AttendanceEvidenceRoutes = require("./modules/AttendanceEvidence/AttendanceEvidenceRoutes");
 
 const AuthRoutes = require("./modules/Auth/AuthRouter");
 
@@ -213,6 +214,8 @@ app.use("/api/v1/biometric", BiometricRoutes);
 app.use("/api/v1/attendance", AttendanceRoutes);
 
 app.use("/api/v1/media", MediaRoutes);
+
+app.use("/api/v1/attendance-evidence", AttendanceEvidenceRoutes);
 
 /*
 |--------------------------------------------------------------------------
