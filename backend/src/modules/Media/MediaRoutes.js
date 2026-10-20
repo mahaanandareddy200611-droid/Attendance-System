@@ -23,6 +23,13 @@ router.post(
 );
 
 router.get(
+  "/session/:sessionId",
+  Auth,
+  authorize("Lecturer", "Admin"),
+  controller.listSessionEvidence,
+);
+
+router.get(
   "/:assetId/url",
   Auth,
   authorize("Lecturer", "Admin"),
