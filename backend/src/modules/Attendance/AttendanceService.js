@@ -75,6 +75,92 @@ const {
 
 
 
+/**
+ * Atomically expire stale attendance sessions and finalize every unmarked
+ * roster entry as ABSENT. A caller may supply its existing Mongo transaction.
+ * Background sweeps process bounded batches so one transaction cannot grow
+ * with the entire semester's session history.
+ */
+const expireExpiredSessions = async ({ sessionId, sectionId, dbSession: suppliedSession } = {}) => {
+    const ownsSession = !suppliedSession;
+    const transactionSession = suppliedSession || await mongoose.startSession();
+
+    try {
+        let expiredPublicIds = [];
+
+        const expireWork = async (activeSession) => {
+            expiredPublicIds = [];
+            const now = new Date();
+            const filter = { status: "ACTIVE", expiresAt: { $lte: now } };
+            if (sessionId) filter.sessionId = sessionId;
+            if (sectionId) filter.sectionId = sectionId;
+
+            const candidates = await AttendanceSession.find(filter)
+                .select("_id sessionId sectionId lecturerId")
+                .sort({ expiresAt: 1 })
+                .limit(sessionId || sectionId ? 1 : 100)
+                .session(activeSession)
+                .lean();
+
+            if (!candidates.length) return;
+
+            const candidateIds = candidates.map((item) => item._id);
+            const currentlyExpired = await AttendanceSession.find({
+                _id: { $in: candidateIds },
+                status: "ACTIVE",
+                expiresAt: { $lte: now }
+            })
+                .select("_id sessionId sectionId lecturerId")
+                .session(activeSession)
+                .lean();
+
+            if (!currentlyExpired.length) return;
+
+            const expiredIds = currentlyExpired.map((item) => item._id);
+            await AttendanceSession.updateMany(
+                { _id: { $in: expiredIds }, status: "ACTIVE", expiresAt: { $lte: now } },
+                { $set: { status: "EXPIRED", endedAt: now }, $inc: { version: 1 } },
+                { session: activeSession }
+            );
+
+            await AttendanceSessionStudent.updateMany(
+                { sessionId: { $in: expiredIds }, status: { $in: ["ELIGIBLE", "LATE"] } },
+                { $set: { status: "ABSENT" } },
+                { session: activeSession }
+            );
+
+            await AuditEvent.insertMany(
+                currentlyExpired.map((item) => ({
+                    event: "ATTENDANCE_SESSION_EXPIRED",
+                    userId: item.lecturerId,
+                    sessionId: item._id,
+                    metadata: {
+                        publicSessionId: item.sessionId,
+                        sectionId: String(item.sectionId),
+                        reason: "AUTOMATIC_EXPIRY"
+                    }
+                })),
+                { session: activeSession, ordered: true }
+            );
+
+            expiredPublicIds = currentlyExpired.map((item) => item.sessionId);
+        };
+
+        if (ownsSession) {
+            await transactionSession.withTransaction(async () => expireWork(transactionSession));
+        } else {
+            await expireWork(transactionSession);
+        }
+
+        return expiredPublicIds;
+    } finally {
+        if (ownsSession) await transactionSession.endSession();
+    }
+};
+
+exports.expireExpiredSessions = expireExpiredSessions;
+
+
 /*
 ==================================================
 CREATE ATTENDANCE SESSION
@@ -109,17 +195,11 @@ exports.createSession = async ({
                 --------------------------------------------------
                 */
 
-                const section =
-                    await ClassSection
-                        .findOne({
-                            _id: sectionId,
-                            status: "ACTIVE"
-                        })
-                        .populate(
-                            "courseId",
-                            "code name"
-                        )
-                        .session(dbSession);
+                const section = await ClassSection.findOneAndUpdate(
+                    { _id: sectionId, status: "ACTIVE" },
+                    { $inc: { locationVersion: 1 } },
+                    { new: true, session: dbSession }
+                ).populate("courseId", "code name");
 
                 if (!section) {
                     throw new AppError(
@@ -159,24 +239,7 @@ exports.createSession = async ({
                 const now =
                     new Date();
 
-                await AttendanceSession.updateMany(
-                    {
-                        sectionId,
-                        status: "ACTIVE",
-                        expiresAt: {
-                            $lte: now
-                        }
-                    },
-                    {
-                        $set: {
-                            status: "EXPIRED",
-                            endedAt: now
-                        },
-                        $inc: {
-                            version: 1
-                        }
-                    }
-                ).session(dbSession);
+                await expireExpiredSessions({ sectionId, dbSession });
 
 
                 /*
@@ -491,23 +554,9 @@ exports.getCurrentQr = async ({
     }
 
 
-    if (
-        new Date() >
-        session.expiresAt
-    ) {
-
-        session.status =
-            "EXPIRED";
-
-        session.endedAt =
-            new Date();
-
-        await session.save();
-
-        throw new AppError(
-            "Attendance session expired",
-            400
-        );
+    if (Date.now() >= new Date(session.expiresAt).getTime()) {
+        await expireExpiredSessions({ sessionId: session.sessionId });
+        throw new AppError("Attendance session expired", 400);
     }
 
 
@@ -763,20 +812,6 @@ exports.verifyAttendance = async ({
     } = tokenResult.payload;
 
 
-    /*
-    --------------------------------------------------
-    3. VERIFY TIME SLOT
-    --------------------------------------------------
-    */
-
-    if (!isSlotFresh(slot)) {
-
-        throw new AppError(
-            "Attendance QR has expired",
-            401
-        );
-    }
-
 
     /*
     --------------------------------------------------
@@ -858,26 +893,35 @@ exports.verifyAttendance = async ({
     }
 
 
-    if (
-        new Date() >
-        session.expiresAt
-    ) {
-
-        session.status =
-            "EXPIRED";
-
-        session.endedAt =
-            new Date();
-
-        await session.save();
-
-        throw new AppError(
-            "Attendance session expired",
-            400
-        );
+    if (Date.now() >= new Date(session.expiresAt).getTime()) {
+        await expireExpiredSessions({ sessionId: session.sessionId });
+        throw new AppError("Attendance session expired", 400);
     }
 
 
+    if (!deviceId || !deviceSignature) {
+        throw new AppError("Registered device proof is required", 401);
+    }
+
+    /*
+    --------------------------------------------------
+    DEVICE CRYPTOGRAPHIC VERIFICATION
+    Verify the signed request before trusting GPS inputs.
+    --------------------------------------------------
+    */
+    await verifyAttendanceDevice({
+        userId: studentId,
+        deviceId,
+        signature: deviceSignature,
+        sessionId: session.sessionId,
+        token,
+        idempotencyKey,
+        biometricAssertionId,
+        latitude,
+        longitude,
+        accuracyMeters,
+        capturedAt
+    });
     const studentLatitude = Number(latitude);
     const studentLongitude = Number(longitude);
     const studentAccuracy = Number(accuracyMeters);
@@ -1059,9 +1103,6 @@ exports.verifyAttendance = async ({
         );
     }
 
-    if (!deviceId || !deviceSignature) {
-        throw new AppError("Registered device proof is required", 401);
-    }
 
     // Check the assertion before claiming idempotency; consume it only after a replay check.
     await validateBiometricAssertion({
@@ -1070,27 +1111,6 @@ exports.verifyAttendance = async ({
         sessionId: session.sessionId
     });
 
-    /*
-    --------------------------------------------------
-    9. DEVICE CRYPTOGRAPHIC VERIFICATION
-    --------------------------------------------------
-    */
-    await verifyAttendanceDevice({
-        userId:
-            studentId,
-
-        deviceId,
-
-        signature:
-            deviceSignature,
-
-        sessionId:
-            session.sessionId,
-
-        token,
-
-        idempotencyKey
-    });
 
     /*
     --------------------------------------------------

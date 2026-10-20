@@ -102,3 +102,16 @@ exports.searchUsers = asyncHandler(async (req, res) => {
     });
     return res.status(200).json({ success: true, ...result });
 });
+
+exports.updateSectionLocation = asyncHandler(async (req, res) => {
+    const section = await academicService.updateSectionLocation({
+        sectionId: req.params.sectionId,
+        latitude: req.body.latitude,
+        longitude: req.body.longitude
+    });
+
+    return res.status(200).json({
+        success: true,
+        data: section
+    });
+});

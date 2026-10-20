@@ -116,7 +116,8 @@ exports.verify =
 
             const {
                 sessionId,
-                challengeId
+                challengeId,
+                challenge
             } = req.body;
 
 
@@ -128,7 +129,7 @@ exports.verify =
                     sessionId,
 
                     challengeId,
-
+                    challenge,
                     imageBuffer:
                         req.file.buffer,
 
@@ -165,3 +166,22 @@ exports.verify =
 });
         }
     );
+
+
+exports.createActiveChallenge = asyncHandler(async (req, res) => {
+    const result = await biometricService.createActiveChallenge({ userId: req.user.id, sessionId: req.body.sessionId });
+    return res.status(200).json({ success: true, data: result, requestId: req.id });
+});
+
+exports.verifyActiveSequence = asyncHandler(async (req, res) => {
+    if (!Array.isArray(req.files) || req.files.length !== 3) throw new AppError('Exactly three liveness frames are required', 400);
+    const { sessionId, challengeId, challenge } = req.body;
+    const result = await biometricService.verifyActiveSequence({
+        userId: req.user.id,
+        sessionId,
+        challengeId,
+        challenge,
+        frames: req.files.map((file) => ({ imageBuffer: file.buffer, mimeType: file.mimetype }))
+    });
+    return res.status(200).json({ success: true, data: result, requestId: req.id });
+});

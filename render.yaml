@@ -1,0 +1,92 @@
+services:
+  - type: web
+    name: attendance-backend-staging
+    runtime: docker
+    plan: free
+    region: singapore
+    dockerfilePath: ./backend/Dockerfile
+    dockerContext: ./backend
+    healthCheckPath: /api/v1/readyz
+    autoDeployTrigger: commit
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: PORT
+        value: "10000"
+      - key: JWT_SECRET
+        generateValue: true
+      - key: ATTENDANCE_TOKEN_SECRET
+        generateValue: true
+      - key: REDIS_URL
+        fromService:
+          type: keyvalue
+          name: attendance-redis-staging
+          property: connectionString
+
+      - key: MONGO_URL
+        sync: false
+      - key: JWT_EXPIRES_IN
+        sync: false
+      - key: MAIL_HOST
+        sync: false
+      - key: MAIL_PORT
+        sync: false
+      - key: MAIL_USER
+        sync: false
+      - key: MAIL_PASSWORD
+        sync: false
+      - key: QR_REFRESH_MS
+        sync: false
+      - key: QR_ALLOWED_SKEW_SLOTS
+        sync: false
+      - key: ATTENDANCE_SESSION_MINUTES
+        sync: false
+      - key: CORS_ORIGINS
+        sync: false
+      - key: ATTENDANCE_STUDENT_RATE_CAPACITY
+        sync: false
+      - key: ATTENDANCE_STUDENT_RATE_REFILL
+        sync: false
+      - key: ATTENDANCE_IP_RATE_CAPACITY
+        sync: false
+      - key: ATTENDANCE_IP_RATE_REFILL
+        sync: false
+
+      - key: BIOMETRIC_SERVICE_URL
+        sync: false
+      - key: BIOMETRIC_SERVICE_KEY
+        sync: false
+      - key: BIOMETRIC_CHALLENGE_TTL_MS
+        sync: false
+      - key: INSIGHTFACE_AUTH_ENABLED
+        sync: false
+      - key: INSIGHTFACE_API_KEY
+        sync: false
+      - key: BIOMETRIC_BASE_URL
+        sync: false
+      - key: BIOMETRIC_API_KEY
+        sync: false
+      - key: BIOMETRIC_COLLECTION_ID
+        sync: false
+      - key: BIOMETRIC_MODEL_VERSION
+        sync: false
+      - key: BIOMETRIC_TIMEOUT_MS
+        sync: false
+      - key: BIOMETRIC_MATCH_THRESHOLD
+        sync: false
+      - key: BIOMETRIC_LIVENESS_THRESHOLD
+        sync: false
+      - key: BIOMETRIC_ASSERTION_TTL_MS
+        sync: false
+
+      - key: ATTENDANCE_MAX_GPS_ACCURACY_METERS
+        sync: false
+      - key: MAX_GPS_ACCURACY_METERS
+        sync: false
+
+  - type: keyvalue
+    name: attendance-redis-staging
+    plan: free
+    region: singapore
+    maxmemoryPolicy: noeviction
+    ipAllowList: []

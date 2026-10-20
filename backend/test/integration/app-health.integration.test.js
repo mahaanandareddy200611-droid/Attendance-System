@@ -27,6 +27,7 @@ if (!mongoUrl || !redisUrl) {
     }
 
     // Configure before importing app.js and its Redis client.
+    process.env.NODE_ENV = "test";
     process.env.REDIS_URL = redisUrl;
 
     const mongoose = require("mongoose");

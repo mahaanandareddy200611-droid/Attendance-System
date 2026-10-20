@@ -421,3 +421,32 @@ exports.verify =
                 result.request_id
         };
     };
+
+
+/**
+ * Detect exactly one live face and return five-point landmarks for a single
+ * frame. Requires the InsightFace Server liveness addon to be enabled.
+ */
+exports.detect = async ({ imageBuffer, mimeType }) => {
+    if (!Buffer.isBuffer(imageBuffer)) throw new AppError('Biometric frame is required', 400);
+    const form = new FormData();
+    form.append('image', new Blob([imageBuffer], { type: mimeType || 'image/jpeg' }), 'liveness-frame.jpg');
+    form.append('max_faces', '2');
+    form.append('collection_id', process.env.BIOMETRIC_COLLECTION_ID || 'students');
+    const result = await request({ path: '/v1/detect', method: 'POST', body: form });
+    if (!Array.isArray(result?.faces) || result.faces.length !== 1) {
+        throw new AppError('Each active liveness frame must contain exactly one face', 401);
+    }
+    const face = result.faces[0];
+    const liveness = face?.liveness;
+    if (!liveness) throw new AppError('Biometric provider did not evaluate liveness for a frame', 502);
+    if (liveness.status !== 'ok' || liveness.is_live !== true) throw new AppError('A liveness frame failed the provider PAD check', 401);
+    const liveScore = Number(liveness.live_score);
+    if (!Number.isFinite(liveScore) || liveScore < 0 || liveScore > 1) throw new AppError('Biometric provider returned an invalid liveness score', 502);
+    const ActiveLiveness = require('./ActiveLiveness');
+    return {
+        livenessPassed: true,
+        livenessScore: liveScore,
+        landmarks: ActiveLiveness.normalizeLandmarks(face.landmarks || face.keypoints)
+    };
+};

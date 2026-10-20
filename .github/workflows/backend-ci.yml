@@ -1,0 +1,63 @@
+name: Backend CI
+
+on:
+  push:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  pull_request:
+    paths:
+      - "backend/**"
+      - ".github/workflows/backend-ci.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: backend-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Start MongoDB replica set
+        uses: supercharge/mongodb-github-action@1.12.1
+        with:
+          mongodb-version: "7.0"
+          mongodb-replica-set: rs0
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Run unit and database/Redis integration tests
+        working-directory: backend
+        run: npm test
+        env:
+          NODE_ENV: test
+          JWT_SECRET: attendance-ci-jwt-secret-not-for-production-32-bytes
+          JWT_EXPIRES_IN: 1h
+          ATTENDANCE_TOKEN_SECRET: attendance-ci-token-secret-not-for-production-32-bytes
+          MONGO_URL: mongodb://127.0.0.1:27017/attendance_system?replicaSet=rs0
+          TEST_MONGO_URL: mongodb://127.0.0.1:27017/attendance_test?replicaSet=rs0
+          REDIS_URL: redis://127.0.0.1:6379/15
+          TEST_REDIS_URL: redis://127.0.0.1:6379/15
+          CORS_ORIGINS: http://localhost:5173

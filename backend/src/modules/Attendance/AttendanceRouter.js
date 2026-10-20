@@ -21,6 +21,7 @@ const {
 
 const { createRateLimiter } = require("../../middlewares/rateLimiter");
 const validate = require("../../utils/validate");
+const validateIdempotencyKey = require("../../middlewares/validateIdempotencyKey");
 const { createSession: createSessionSchema, verifyAttendance: verifyAttendanceSchema } = require("./AttendanceValidator");
 
 const studentAttendanceRateLimit =
@@ -113,9 +114,10 @@ AttendanceRouter.post(
     "/verify",
     Auth,
     authorize("Student"),
-    validate(verifyAttendanceSchema),
     studentAttendanceRateLimit,
     ipAttendanceRateLimit,
+    validate(verifyAttendanceSchema),
+    validateIdempotencyKey,
     verifyAttendance
 );
 

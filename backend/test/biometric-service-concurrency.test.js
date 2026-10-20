@@ -91,6 +91,7 @@ function verifyArgs(overrides = {}) {
         userId: USER_ID,
         sessionId: SESSION_ID,
         challengeId: CHALLENGE_ID,
+        challenge: "single-use-test-nonce",
         imageBuffer: Buffer.from("test-image"),
         mimeType: "image/jpeg",
         ...overrides
@@ -105,6 +106,38 @@ function assertionArgs(assertionId) {
     };
 }
 
+test("rejects an incorrect challenge response before provider invocation and preserves the valid challenge", async (t) => {
+    const entries = mockRedis(t, {
+        [challengeKey()]: validChallenge()
+    });
+
+    let providerCalls = 0;
+    t.mock.method(provider, "verify", async () => {
+        providerCalls += 1;
+        return validProviderResult();
+    });
+
+    await assert.rejects(
+        biometricService.verify(verifyArgs({ challenge: "single-use-test-noncx" })),
+        (error) => error.statusCode === 401
+    );
+
+    assert.equal(entries.has(challengeKey()), true);
+    assert.equal(providerCalls, 0);
+});
+
+test("rejects a missing challenge response before consuming the challenge", async (t) => {
+    const entries = mockRedis(t, {
+        [challengeKey()]: validChallenge()
+    });
+
+    await assert.rejects(
+        biometricService.verify(verifyArgs({ challenge: undefined })),
+        (error) => error.statusCode === 400
+    );
+
+    assert.equal(entries.has(challengeKey()), true);
+});
 test("two concurrent verifications consume one challenge only once", async (t) => {
     const entries = mockRedis(t, {
         [challengeKey()]: validChallenge()

@@ -17,3 +17,11 @@ export const getSections = (params = {}) =>
   api.get("/academic/sections", { params });
 export const searchAcademicUsers = (params = {}) =>
   api.get("/academic/users", { params });
+
+// Used by AdminAcademic to select an existing section without manually
+// guessing/copying a MongoDB ID.
+export const listSectionsForLocation = (params = {}) =>
+  api.get("/academic/sections", { params });
+
+export const setSectionLocation = (sectionId, data) =>
+  api.patch(`/academic/sections/${sectionId}/location`, data);

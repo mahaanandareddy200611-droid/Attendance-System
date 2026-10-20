@@ -177,6 +177,9 @@ AttendanceSessionSchema.index({
     expiresAt: 1
 });
 
+// Supports the bounded background sweep of active sessions past expiresAt.
+AttendanceSessionSchema.index({ status: 1, expiresAt: 1 });
+
 module.exports =
     mongoose.model(
         "AttendanceSession",
