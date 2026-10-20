@@ -51,6 +51,7 @@ function StudentAcademic() {
   const { user } = useAuth();
   const [deviceReady, setDeviceReady] = useState(false);
   const [biometricReady, setBiometricReady] = useState(false);
+  const [biometricDeletePending, setBiometricDeletePending] = useState(false);
   const [biometricAssertionId, setBiometricAssertionId] = useState("");
   const [locationEvidence, setLocationEvidence] = useState(null);
   const [locationBusy, setLocationBusy] = useState(false);
@@ -97,7 +98,15 @@ function StudentAcademic() {
                   device.deviceId,
             ),
           );
-          setBiometricReady(Boolean(biometricResponse.data.data));
+          const biometricEnrollment = biometricResponse.data.data;
+          setBiometricReady(biometricEnrollment?.status === "ACTIVE");
+          setBiometricDeletePending(biometricEnrollment?.status === "DELETE_PENDING");
+          if (biometricEnrollment?.status === "DELETE_PENDING") {
+            setNotice({
+              type: "error",
+              text: "Biometric deletion is pending provider cleanup. Attendance remains disabled until that cleanup finishes.",
+            });
+          }
           setSections(sectionResponse.data.data || []);
           setRecords(recordResponse.data.data || []);
           setAvailableSessions(sessionResponse.data.data || []);
@@ -258,6 +267,7 @@ function StudentAcademic() {
     try {
       await enrollBiometric(enrollmentImage);
       setBiometricReady(true);
+      setBiometricDeletePending(false);
       setNotice({ type: "success", text: "Face enrollment completed." });
     } catch (error) {
       const message =
@@ -266,6 +276,7 @@ function StudentAcademic() {
         "Face enrollment failed.";
       if (error.response?.status === 409 && /already exists/i.test(message)) {
         setBiometricReady(true);
+        setBiometricDeletePending(false);
         setNotice({
           type: "success",
           text: "A face enrollment already exists for this account.",
@@ -284,6 +295,7 @@ function StudentAcademic() {
     try {
       const response = await deleteMyBiometricEnrollment();
       setBiometricReady(false);
+      setBiometricDeletePending(false);
       setBiometricAssertionId("");
       setAttendanceToken("");
       setLocationEvidence(null);
@@ -298,6 +310,7 @@ function StudentAcademic() {
       const message = error.response?.data?.error?.message || "Could not finish biometric deletion.";
       if (error.response?.status === 503 && /pending/i.test(message)) {
         setBiometricReady(false);
+        setBiometricDeletePending(true);
         setBiometricAssertionId("");
         setAttendanceToken("");
         setLocationEvidence(null);
@@ -309,6 +322,33 @@ function StudentAcademic() {
       } else {
         setNotice({ type: "error", text: message });
       }
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
+
+
+  const refreshBiometricStatus = async () => {
+    setBiometricBusy(true);
+    setNotice(null);
+    try {
+      const response = await getMyBiometricEnrollment();
+      const enrollment = response.data.data;
+      setBiometricReady(enrollment?.status === "ACTIVE");
+      setBiometricDeletePending(enrollment?.status === "DELETE_PENDING");
+      setNotice({
+        type: enrollment?.status === "DELETE_PENDING" ? "error" : "success",
+        text: enrollment?.status === "DELETE_PENDING"
+          ? "The provider is still deleting this enrollment. Try refreshing again shortly."
+          : enrollment?.status === "ACTIVE"
+            ? "Biometric enrollment is active."
+            : "No active enrollment remains. You can enroll again.",
+      });
+    } catch (error) {
+      setNotice({
+        type: "error",
+        text: error.response?.data?.error?.message || "Could not refresh biometric status.",
+      });
     } finally {
       setBiometricBusy(false);
     }
@@ -564,7 +604,9 @@ function StudentAcademic() {
                 <span>
                   {biometricReady
                     ? "Face enrollment is ready"
-                    : "Choose a clear face photo for enrollment"}
+                    : biometricDeletePending
+                      ? "Deletion pending with biometric provider"
+                      : "Choose a clear face photo for enrollment"}
                 </span>
               </label>
               <input
@@ -575,9 +617,9 @@ function StudentAcademic() {
                 onChange={(event) =>
                   setEnrollmentImage(event.target.files?.[0] || null)
                 }
-                disabled={biometricReady}
+                disabled={biometricReady || biometricDeletePending}
               />
-              {!biometricReady && (
+              {!biometricReady && !biometricDeletePending && (
                 <button
                   className="academic-button"
                   type="submit"
@@ -594,6 +636,16 @@ function StudentAcademic() {
                   disabled={biometricBusy}
                 >
                   {biometricBusy ? "Deleting…" : "Delete face enrollment"}
+                </button>
+              )}
+              {biometricDeletePending && (
+                <button
+                  className="academic-button secondary"
+                  type="button"
+                  onClick={refreshBiometricStatus}
+                  disabled={biometricBusy}
+                >
+                  {biometricBusy ? "Checking…" : "Refresh deletion status"}
                 </button>
               )}
             </form>
