@@ -6,7 +6,8 @@
   "scripts": {
     "test": "node --test",
     "admin:create": "node scripts/create-admin.js",
-    "start": "node server.js"
+    "start": "node server.js",
+    "storage:smoke": "node scripts/private-storage-smoke.js"
   },
   "keywords": [],
   "author": "",
