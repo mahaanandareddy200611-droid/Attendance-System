@@ -22,6 +22,7 @@ const {
 const { expireExpiredSessions } = require("./src/modules/Attendance/AttendanceService");
 const { sweepExpiredMediaAssets } = require("./src/modules/Media/MediaService");
 const { sweepPendingBiometricDeletes } = require("./src/modules/Biometric/BiometricService");
+const { service: attendanceEvidenceService } = require("./src/modules/AttendanceEvidence/AttendanceEvidenceService");
 
 const mongoose =
     require("mongoose");
@@ -50,6 +51,10 @@ const runExpirationSweep = async () => {
         const biometricCleanup = await sweepPendingBiometricDeletes({ limit: 10 });
         if (biometricCleanup.deleted > 0 || biometricCleanup.failed > 0) {
             console.info("Biometric deletion retry cycle completed", biometricCleanup);
+        }
+        const evidenceCleanup = await attendanceEvidenceService.cleanupExpiredEvidence({ limit: 25 });
+        if (evidenceCleanup.deleted > 0 || evidenceCleanup.failed > 0) {
+            console.info("Attendance evidence retention cycle completed", evidenceCleanup);
         }
     } catch (error) {
         // Do not emit database details or student identifiers into routine logs.
