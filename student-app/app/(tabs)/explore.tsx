@@ -70,7 +70,7 @@ export default function AttendanceHistoryScreen() {
           <View style={{ flex: 1 }}>
             <Text style={styles.eyebrow}>STUDENT WORKSPACE</Text>
             <Text style={styles.title}>Attendance history</Text>
-            <Text style={styles.subtitle}>The server's saved attendance records are authoritative.</Text>
+            <Text style={styles.subtitle}>The server&apos;s saved attendance records are authoritative.</Text>
           </View>
           <Pressable style={styles.refreshButton} disabled={loading} onPress={() => void reload()}>
             <Text style={styles.refreshText}>{loading ? "Loading…" : "Refresh"}</Text>
