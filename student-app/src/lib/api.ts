@@ -48,7 +48,7 @@ export async function apiRequest<T = any>(
     Accept: "application/json",
     ...options.headers,
   };
-  if (options.token) headers.Authorization = \`Bearer \${options.token}\`;
+  if (options.token) headers.Authorization = `Bearer ${options.token}`;
 
   let body: BodyInit | undefined;
   if (options.body instanceof FormData) {
@@ -59,7 +59,7 @@ export async function apiRequest<T = any>(
   }
 
   try {
-    const response = await fetch(\`\${API_BASE_URL}\${path}\`, {
+    const response = await fetch(`${API_BASE_URL}${path}`, {
       method: options.method ?? (body ? "POST" : "GET"),
       headers,
       body,
@@ -74,7 +74,7 @@ export async function apiRequest<T = any>(
     }
     if (!response.ok) {
       throw new ApiError(
-        payload.error?.message || payload.message || \`Request failed (\${response.status})\`,
+        payload.error?.message || payload.message || `Request failed (${response.status})`,
         response.status,
         payload.error?.code,
         payload.requestId,
@@ -88,7 +88,7 @@ export async function apiRequest<T = any>(
     }
     if (error instanceof TypeError) {
       throw new Error(
-        \`Cannot reach \${API_BASE_URL}. For a physical phone on local Wi-Fi, set EXPO_PUBLIC_API_BASE_URL to your computer's LAN IP and backend port.\`,
+        `Cannot reach ${API_BASE_URL}. For a physical phone on local Wi-Fi, set EXPO_PUBLIC_API_BASE_URL to your computer's LAN IP and backend port.`,
       );
     }
     throw error;
