@@ -58,7 +58,7 @@ const MediaAssetSchema = new mongoose.Schema(
     },
     status: {
       type: String,
-      enum: ["ACTIVE", "DELETE_PENDING", "DELETED"],
+      enum: ["UPLOADING", "ACTIVE", "DELETE_PENDING", "DELETED"],
       default: "ACTIVE",
       required: true,
       index: true,
