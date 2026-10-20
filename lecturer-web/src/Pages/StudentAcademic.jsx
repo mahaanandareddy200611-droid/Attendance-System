@@ -9,6 +9,7 @@ import {
   getAvailableAttendanceSessions,
   getMyAttendanceRecords,
   markAttendance,
+  getCurrentLocation,
 } from "../services/attendance.service";
 import {
   hasRegisteredDeviceKey,
@@ -50,6 +51,8 @@ function StudentAcademic() {
   const [deviceReady, setDeviceReady] = useState(false);
   const [biometricReady, setBiometricReady] = useState(false);
   const [biometricAssertionId, setBiometricAssertionId] = useState("");
+  const [locationEvidence, setLocationEvidence] = useState(null);
+  const [locationBusy, setLocationBusy] = useState(false);
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [attendanceBusy, setAttendanceBusy] = useState(false);
@@ -123,10 +126,16 @@ function StudentAcademic() {
 
   const startScan = async () => {
     setNotice(null);
+    if (!sessionId || !biometricAssertionId || !locationEvidence) {
+      setNotice({
+        type: "error",
+        text: "Select a session, complete active liveness, and get a location reading before scanning the QR.",
+      });
+      return;
+    }
     setAttendanceToken("");
-    setSessionId("");
-    setBiometricAssertionId("");
     idempotencyKeyRef.current = null;
+    const expectedSessionId = sessionId;
     try {
       const scanner = new Html5Qrcode("student-qr-reader");
       scannerRef.current = scanner;
@@ -137,12 +146,14 @@ function StudentAcademic() {
           try {
             const token = getQrToken(text);
             const sid = decodeSessionId(token);
+            if (sid !== expectedSessionId) {
+              throw new Error("This QR belongs to a different session. Scan the QR for the session you selected.");
+            }
             setAttendanceToken(token);
-            setSessionId(sid);
             idempotencyKeyRef.current = crypto.randomUUID();
             setNotice({
               type: "success",
-              text: "Active attendance QR scanned. Complete the check-in steps below.",
+              text: "Fresh QR captured. Submit attendance now.",
             });
             if (scanner.isScanning) await scanner.stop().catch(() => {});
             setScanning(false);
@@ -264,6 +275,27 @@ function StudentAcademic() {
     }
   };
 
+  const prepareLocation = async () => {
+    setLocationBusy(true);
+    setNotice(null);
+    try {
+      const evidence = await getCurrentLocation();
+      setLocationEvidence(evidence);
+      setNotice({
+        type: "success",
+        text: "Location captured. Scan the selected session's current QR immediately afterward.",
+      });
+    } catch (error) {
+      setLocationEvidence(null);
+      setNotice({
+        type: "error",
+        text: error.message || "Could not capture location. Check browser permission and try again.",
+      });
+    } finally {
+      setLocationBusy(false);
+    }
+  };
+
   const submitAttendance = async () => {
     setAttendanceBusy(true);
     setNotice(null);
@@ -273,6 +305,7 @@ function StudentAcademic() {
         sessionId,
         token: attendanceToken,
         biometricAssertionId,
+        locationEvidence,
         idempotencyKey: idempotencyKeyRef.current,
       });
       setNotice({
@@ -284,6 +317,7 @@ function StudentAcademic() {
       setAttendanceToken("");
       setSessionId("");
       setBiometricAssertionId("");
+      setLocationEvidence(null);
       idempotencyKeyRef.current = null;
     } catch (error) {
       setNotice({
@@ -378,6 +412,24 @@ function StudentAcademic() {
                   Started {new Date(item.startedAt).toLocaleTimeString()} ·
                   Expires {new Date(item.expiresAt).toLocaleTimeString()}
                 </span>
+                <button
+                  type="button"
+                  className="academic-button secondary"
+                  disabled={attendanceBusy}
+                  onClick={() => {
+                    setSessionId(item.sessionId);
+                    setAttendanceToken("");
+                    setBiometricAssertionId("");
+                    setLocationEvidence(null);
+                    idempotencyKeyRef.current = null;
+                    setNotice({
+                      type: "success",
+                      text: "Session selected. Complete active liveness and location preflight before scanning the fresh QR.",
+                    });
+                  }}
+                >
+                  {sessionId === item.sessionId ? "Selected session" : "Select session"}
+                </button>
               </article>
             ))
           ) : (
@@ -504,9 +556,54 @@ function StudentAcademic() {
           </p>
         </section>
 
+        {sessionId && (
+          <section className="academic-card student-setup-card">
+            <div className="academic-card-title">
+              <span className="academic-step">02</span>
+              <div>
+                <h2>Prepare your check-in</h2>
+                <p>
+                  Selected session {sessionId.slice(0, 8)}. Complete the camera challenge and get location before scanning the short-lived QR.
+                </p>
+              </div>
+            </div>
+            <ActiveLivenessCapture
+              sessionId={sessionId}
+              disabled={!deviceReady || !biometricReady || attendanceBusy}
+              onVerified={(assertionId) => {
+                setBiometricAssertionId(assertionId);
+                setAttendanceToken("");
+                setLocationEvidence(null);
+                idempotencyKeyRef.current = null;
+                setNotice({
+                  type: "success",
+                  text: "Active liveness passed. Get location, then scan a fresh QR for this session.",
+                });
+              }}
+            />
+            <button
+              type="button"
+              className="academic-button secondary"
+              onClick={prepareLocation}
+              disabled={!biometricAssertionId || locationBusy || attendanceBusy}
+            >
+              {locationBusy
+                ? "Getting location…"
+                : locationEvidence
+                  ? "Refresh location"
+                  : "Get current location"}
+            </button>
+            {locationEvidence && (
+              <p className="academic-footnote">
+                Accuracy: {Math.round(locationEvidence.accuracyMeters)} m · Captured {new Date(locationEvidence.capturedAt).toLocaleTimeString()}
+              </p>
+            )}
+          </section>
+        )}
+
         <section className="academic-card student-scan-card">
           <div className="academic-card-title">
-            <span className="academic-step">02</span>
+            <span className="academic-step">03</span>
             <div>
               <h2>Scan the lecturer’s QR</h2>
               <p>
@@ -516,7 +613,11 @@ function StudentAcademic() {
           </div>
           <div id="student-qr-reader" className="student-qr-reader" />
           {!scanning ? (
-            <button className="academic-button" onClick={startScan}>
+            <button
+              className="academic-button"
+              onClick={startScan}
+              disabled={!sessionId || !biometricAssertionId || !locationEvidence || attendanceBusy}
+            >
               {attendanceToken ? "Scan a different QR" : "Open camera and scan"}
             </button>
           ) : (
@@ -533,21 +634,10 @@ function StudentAcademic() {
               <p className="academic-eyebrow">
                 QR SCANNED · SESSION {sessionId.slice(0, 8)}
               </p>
-              <ActiveLivenessCapture
-                sessionId={sessionId}
-                disabled={!deviceReady || !biometricReady || attendanceBusy}
-                onVerified={(assertionId) => {
-                  setBiometricAssertionId(assertionId);
-                  setNotice({
-                    type: "success",
-                    text: "Face matching and the active liveness sequence passed. Finish check-in before the assertion expires.",
-                  });
-                }}
-              />
               <p className="academic-footnote">
-                {biometricAssertionId
-                  ? "A short-lived verification assertion is ready for this session."
-                  : "Complete all three camera instructions to create a one-time verification assertion."}
+                {biometricAssertionId && locationEvidence
+                  ? "Ready. Submit this fresh QR now."
+                  : "Complete the preparation steps above, then scan a fresh QR and submit immediately."}
               </p>
               <button
                 className="academic-button"
@@ -556,19 +646,13 @@ function StudentAcademic() {
                   attendanceBusy ||
                   !deviceReady ||
                   !biometricReady ||
-                  !biometricAssertionId
+                  !biometricAssertionId ||
+                  !locationEvidence ||
+                  !attendanceToken
                 }
               >
-                {attendanceBusy
-                  ? "Verifying check-in…"
-                  : "Verify and mark attendance"}
+                {attendanceBusy ? "Submitting…" : "Submit attendance"}
               </button>
-              {(!deviceReady || !biometricReady || !biometricAssertionId) && (
-                <p className="academic-footnote">
-                  Finish device registration, face enrollment, and the active
-                  liveness check to enable check-in.
-                </p>
-              )}
             </div>
           )}
         </section>
