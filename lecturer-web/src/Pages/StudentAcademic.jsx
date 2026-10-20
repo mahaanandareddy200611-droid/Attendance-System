@@ -4,6 +4,7 @@ import {
   enrollBiometric,
   getMyBiometricEnrollment,
 } from "../services/biometric.service";
+import ActiveLivenessCapture from "../components/ActiveLivenessCapture";
 import {
   getAvailableAttendanceSessions,
   getMyAttendanceRecords,
@@ -48,11 +49,11 @@ function StudentAcademic() {
   const { user } = useAuth();
   const [deviceReady, setDeviceReady] = useState(false);
   const [biometricReady, setBiometricReady] = useState(false);
+  const [biometricAssertionId, setBiometricAssertionId] = useState("");
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [attendanceBusy, setAttendanceBusy] = useState(false);
   const [enrollmentImage, setEnrollmentImage] = useState(null);
-  const [verificationImage, setVerificationImage] = useState(null);
   const [scanning, setScanning] = useState(false);
   const [attendanceToken, setAttendanceToken] = useState("");
   const [sessionId, setSessionId] = useState("");
@@ -124,6 +125,7 @@ function StudentAcademic() {
     setNotice(null);
     setAttendanceToken("");
     setSessionId("");
+    setBiometricAssertionId("");
     idempotencyKeyRef.current = null;
     try {
       const scanner = new Html5Qrcode("student-qr-reader");
@@ -270,7 +272,7 @@ function StudentAcademic() {
         userId: user.id,
         sessionId,
         token: attendanceToken,
-        verificationImage,
+        biometricAssertionId,
         idempotencyKey: idempotencyKeyRef.current,
       });
       setNotice({
@@ -281,6 +283,7 @@ function StudentAcademic() {
       setRecords(recordsResponse.data.data || []);
       setAttendanceToken("");
       setSessionId("");
+      setBiometricAssertionId("");
       idempotencyKeyRef.current = null;
     } catch (error) {
       setNotice({
@@ -530,21 +533,22 @@ function StudentAcademic() {
               <p className="academic-eyebrow">
                 QR SCANNED · SESSION {sessionId.slice(0, 8)}
               </p>
-              <label className="academic-field">
-                <span>Take a fresh face photo for verification</span>
-                <input
-                  type="file"
-                  accept="image/jpeg,image/png,image/webp"
-                  capture="user"
-                  onChange={(event) =>
-                    setVerificationImage(event.target.files?.[0] || null)
-                  }
-                />
-                <small>
-                  The backend checks face match and liveness during attendance
-                  verification.
-                </small>
-              </label>
+              <ActiveLivenessCapture
+                sessionId={sessionId}
+                disabled={!deviceReady || !biometricReady || attendanceBusy}
+                onVerified={(assertionId) => {
+                  setBiometricAssertionId(assertionId);
+                  setNotice({
+                    type: "success",
+                    text: "Face matching and the active liveness sequence passed. Finish check-in before the assertion expires.",
+                  });
+                }}
+              />
+              <p className="academic-footnote">
+                {biometricAssertionId
+                  ? "A short-lived verification assertion is ready for this session."
+                  : "Complete all three camera instructions to create a one-time verification assertion."}
+              </p>
               <button
                 className="academic-button"
                 onClick={submitAttendance}
@@ -552,17 +556,17 @@ function StudentAcademic() {
                   attendanceBusy ||
                   !deviceReady ||
                   !biometricReady ||
-                  !verificationImage
+                  !biometricAssertionId
                 }
               >
                 {attendanceBusy
                   ? "Verifying check-in…"
                   : "Verify and mark attendance"}
               </button>
-              {(!deviceReady || !biometricReady || !verificationImage) && (
+              {(!deviceReady || !biometricReady || !biometricAssertionId) && (
                 <p className="academic-footnote">
-                  Finish device registration, face enrollment, and the fresh
-                  verification photo to enable check-in.
+                  Finish device registration, face enrollment, and the active
+                  liveness check to enable check-in.
                 </p>
               )}
             </div>
