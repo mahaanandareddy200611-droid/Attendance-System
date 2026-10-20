@@ -47,9 +47,12 @@ export async function markAttendance({
     throw new Error("Register this browser as your attendance device first.");
   const deviceSignature = await signAttendanceRequest({
     userId,
+    deviceId,
     sessionId,
     token,
     idempotencyKey: requestKey,
+    biometricAssertionId,
+    ...location,
   });
   return api.post(
     "/attendance/verify",
