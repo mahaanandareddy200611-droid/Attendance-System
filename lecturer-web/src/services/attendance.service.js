@@ -1,6 +1,5 @@
 import api from "../api/api";
 import { signAttendanceRequest } from "./device.service";
-import { verifyBiometricForSession } from "./biometric.service";
 
 export const getMyAttendanceRecords = (params = {}) =>
   api.get("/attendance/records/me", { params });
@@ -34,14 +33,14 @@ export async function markAttendance({
   userId,
   sessionId,
   token,
-  verificationImage,
+  biometricAssertionId,
   idempotencyKey,
 }) {
   const requestKey = idempotencyKey || crypto.randomUUID();
-  const [location, biometricAssertionId] = await Promise.all([
-    getCurrentLocation(),
-    verifyBiometricForSession({ sessionId, image: verificationImage }),
-  ]);
+  if (!biometricAssertionId) {
+    throw new Error("Complete the face and liveness check before marking attendance.");
+  }
+  const location = await getCurrentLocation();
   const deviceId = localStorage.getItem(`attendanceDeviceId:${userId}`);
   if (!deviceId)
     throw new Error("Register this browser as your attendance device first.");
