@@ -3,6 +3,7 @@ import { Html5Qrcode } from "html5-qrcode";
 import {
   enrollBiometric,
   getMyBiometricEnrollment,
+  deleteMyBiometricEnrollment,
 } from "../services/biometric.service";
 import ActiveLivenessCapture from "../components/ActiveLivenessCapture";
 import {
@@ -270,6 +271,44 @@ function StudentAcademic() {
           text: "A face enrollment already exists for this account.",
         });
       } else setNotice({ type: "error", text: message });
+    } finally {
+      setBiometricBusy(false);
+    }
+  };
+
+
+  const removeBiometricEnrollment = async () => {
+    if (!window.confirm("Delete your enrolled face data from the biometric provider?")) return;
+    setBiometricBusy(true);
+    setNotice(null);
+    try {
+      const response = await deleteMyBiometricEnrollment();
+      setBiometricReady(false);
+      setBiometricAssertionId("");
+      setAttendanceToken("");
+      setLocationEvidence(null);
+      idempotencyKeyRef.current = null;
+      setNotice({
+        type: "success",
+        text: response.data?.data?.alreadyDeleted
+          ? "No active biometric enrollment remained."
+          : "Biometric enrollment deletion completed.",
+      });
+    } catch (error) {
+      const message = error.response?.data?.error?.message || "Could not finish biometric deletion.";
+      if (error.response?.status === 503 && /pending/i.test(message)) {
+        setBiometricReady(false);
+        setBiometricAssertionId("");
+        setAttendanceToken("");
+        setLocationEvidence(null);
+        idempotencyKeyRef.current = null;
+        setNotice({
+          type: "error",
+          text: "Biometric deletion is pending because the provider is unavailable. Attendance is disabled; the backend will retry deletion.",
+        });
+      } else {
+        setNotice({ type: "error", text: message });
+      }
     } finally {
       setBiometricBusy(false);
     }
@@ -545,6 +584,16 @@ function StudentAcademic() {
                   disabled={!enrollmentImage || biometricBusy}
                 >
                   {biometricBusy ? "Enrolling…" : "Enroll face"}
+                </button>
+              )}
+              {biometricReady && (
+                <button
+                  className="academic-button secondary"
+                  type="button"
+                  onClick={removeBiometricEnrollment}
+                  disabled={biometricBusy}
+                >
+                  {biometricBusy ? "Deleting…" : "Delete face enrollment"}
                 </button>
               )}
             </form>
