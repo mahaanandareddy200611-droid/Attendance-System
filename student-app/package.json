@@ -40,7 +40,8 @@
     "expo-location": "*",
     "expo-secure-store": "*",
     "expo-crypto": "*",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "expo-file-system": "*"
   },
   "devDependencies": {
     "@types/react": "~19.1.0",
