@@ -7,7 +7,7 @@ services:
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
     healthCheckPath: /api/v1/readyz
-    autoDeployTrigger: checksPass
+    autoDeployTrigger: off
     envVars:
       - key: NODE_ENV
         value: production
@@ -66,6 +66,8 @@ services:
         sync: false
       - key: INSIGHTFACE_API_KEY
         sync: false
+      - key: BIOMETRIC_PRODUCTION_APPROVED
+        value: "false"
       - key: BIOMETRIC_BASE_URL
         sync: false
       - key: BIOMETRIC_API_KEY
