@@ -64,27 +64,42 @@ exports.uploadSessionEvidence = async ({
   const sha256 = crypto.createHash("sha256").update(imageBuffer).digest("hex");
   const retentionUntil = new Date(Date.now() + retentionDays() * 24 * 60 * 60 * 1000);
 
-  await storage.putObject({ key: objectKey, body: imageBuffer, contentType });
+  // Persist the upload intent before contacting object storage. If the process
+  // crashes after the PUT, the sweeper still knows which key must be cleaned up.
+  let asset = await MediaAsset.create({
+    ownerId: actorId,
+    sessionId: session._id,
+    purpose: "SESSION_EVIDENCE",
+    objectKey,
+    contentType,
+    sizeBytes: imageBuffer.length,
+    sha256,
+    originalName: safeOriginalName(originalName),
+    retentionUntil,
+    status: "UPLOADING",
+  });
 
-  let asset;
   try {
-    asset = await MediaAsset.create({
-      ownerId: actorId,
-      sessionId: session._id,
-      purpose: "SESSION_EVIDENCE",
-      objectKey,
-      contentType,
-      sizeBytes: imageBuffer.length,
-      sha256,
-      originalName: safeOriginalName(originalName),
-      retentionUntil,
-      status: "ACTIVE",
-    });
+    await storage.putObject({ key: objectKey, body: imageBuffer, contentType });
+    const activated = await MediaAsset.updateOne(
+      { _id: asset._id, status: "UPLOADING" },
+      { $set: { status: "ACTIVE" } },
+    );
+    if (activated.modifiedCount !== 1) {
+      throw new AppError("Could not activate the retained media record", 503);
+    }
+    asset = await MediaAsset.findById(asset._id).lean();
   } catch (error) {
+    // Retain a discoverable cleanup job; the bounded sweeper retries DELETE,
+    // treating an already-missing object as success.
     try {
-      await storage.deleteObject({ key: objectKey });
+      await MediaAsset.updateOne(
+        { _id: asset._id, status: "UPLOADING" },
+        { $set: { status: "DELETE_PENDING", deleteRequestedAt: new Date() } },
+      );
     } catch (cleanupError) {
-      console.error("Orphan media cleanup failed", {
+      console.error("Media upload cleanup state could not be saved", {
+        assetId: String(asset._id),
         errorName: cleanupError?.name || "Error",
       });
     }
@@ -227,11 +242,13 @@ exports.deleteMediaAsset = async ({ assetId, actorId, role }) => {
 exports.sweepExpiredMediaAssets = async ({ limit = 25 } = {}) => {
   const boundedLimit = Math.max(1, Math.min(Number(limit) || 25, 100));
   const now = new Date();
+  const staleUploadBefore = new Date(now.getTime() - 10 * 60 * 1000);
   const candidates = await MediaAsset.find({
-    status: { $in: ["ACTIVE", "DELETE_PENDING"] },
+    status: { $in: ["ACTIVE", "DELETE_PENDING", "UPLOADING"] },
     $or: [
       { retentionUntil: { $lte: now } },
       { status: "DELETE_PENDING" },
+      { status: "UPLOADING", createdAt: { $lte: staleUploadBefore } },
     ],
   })
     .select("+objectKey ownerId sessionId status retentionUntil")
@@ -242,13 +259,12 @@ exports.sweepExpiredMediaAssets = async ({ limit = 25 } = {}) => {
   const result = { scanned: candidates.length, deleted: 0, failed: 0 };
   for (const asset of candidates) {
     try {
-      if (asset.status === "ACTIVE") {
+      if (asset.status !== "DELETE_PENDING") {
+        const claimFilter = { _id: asset._id, status: asset.status };
+        if (asset.status === "ACTIVE") claimFilter.retentionUntil = { $lte: now };
+        if (asset.status === "UPLOADING") claimFilter.createdAt = { $lte: staleUploadBefore };
         const claimed = await MediaAsset.updateOne(
-          {
-            _id: asset._id,
-            status: "ACTIVE",
-            retentionUntil: { $lte: now },
-          },
+          claimFilter,
           { $set: { status: "DELETE_PENDING", deleteRequestedAt: now } },
         );
         if (claimed.modifiedCount !== 1) continue;
