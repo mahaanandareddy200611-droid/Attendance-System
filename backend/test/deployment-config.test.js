@@ -71,9 +71,9 @@ test("Render Blueprint wires the lecturer site to the backend origin with matchi
 });
 
 test("biometric Render blueprint keeps licensing explicit, data persistent, and model API private", () => {
-  const blueprint = fs.readFileSync(path.join(root, "..", "biometric-provider", "render.yaml"), "utf8");
-  const entrypoint = fs.readFileSync(path.join(root, "..", "biometric-provider", "entrypoint.sh"), "utf8");
-  const config = fs.readFileSync(path.join(root, "..", "biometric-provider", "server.toml"), "utf8");
+  const blueprint = fs.readFileSync(path.join(root, "biometric-provider", "render.yaml"), "utf8");
+  const entrypoint = fs.readFileSync(path.join(root, "biometric-provider", "entrypoint.sh"), "utf8");
+  const config = fs.readFileSync(path.join(root, "biometric-provider", "server.toml"), "utf8");
   assert.match(blueprint, /plan:\s*1c-2g/);
   assert.match(blueprint, /mountPath:\s*\/data/);
   assert.match(blueprint, /sizeGB:\s*5/);
