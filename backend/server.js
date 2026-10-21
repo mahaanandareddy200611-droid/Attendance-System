@@ -3,6 +3,9 @@ const dotenv = require("dotenv");
 
 dotenv.config();
 
+const { validateRuntimeConfig } = require("./src/config/runtimeConfig");
+try { validateRuntimeConfig(process.env); } catch (error) { console.error("Startup configuration validation failed", { missingOrInvalid: error.missingOrInvalid || [] }); process.exit(1); }
+
 const app =
     require("./src/app");
 

@@ -1,0 +1,33 @@
+# Deploy this as a separate Render Blueprint only after reviewing the
+# model licence and accepting the recurring compute + persistent-disk cost.
+services:
+  - type: web
+    name: attendance-biometric-staging
+    runtime: docker
+    plan: 1c-2g
+    region: singapore
+    dockerfilePath: ./biometric-provider/Dockerfile
+    dockerContext: ./biometric-provider
+    healthCheckPath: /v1/health
+    autoDeployTrigger: off
+    disk:
+      name: attendance-biometric-data
+      mountPath: /data
+      sizeGB: 5
+    envVars:
+      - key: PORT
+        value: "10000"
+      - key: INSIGHTFACE_AUTH_ENABLED
+        value: "true"
+      - key: INSIGHTFACE_API_KEY
+        sync: false
+      - key: BIOMETRIC_MODEL_LICENSE_ACCEPTED
+        sync: false
+      - key: INSIGHTFACE_DATA_DIR
+        value: /data
+      - key: INSIGHTFACE_MODELS_DIR
+        value: /data/models
+      - key: INSIGHTFACE_CONFIG_FILE
+        value: /etc/insightface/server.toml
+      - key: INSIGHTFACE_SAVE_FACE_CROPS
+        value: "false"

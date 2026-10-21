@@ -5,6 +5,7 @@ const crypto = require("crypto");
 const mongoose = require("mongoose");
 
 const { redisClient } = require("./config/redis");
+const { evaluateReadiness } = require("./config/readiness");
 const academicRoutes = require("./modules/academic/AcademicRoutes");
 
 const DeviceRoutes = require("./modules/Device/DeviceRoutes");
@@ -161,43 +162,8 @@ app.get("/api/v1/livez", (req, res) => {
 });
 
 app.get("/api/v1/readyz", (req, res) => {
-  const mongoReady = mongoose.connection.readyState === 1;
-
-  const redisReady = redisClient.isReady;
-  const biometricProviderConfigured = Boolean(
-    process.env.BIOMETRIC_BASE_URL && process.env.BIOMETRIC_API_KEY
-  );
-  // Gate only the actual Render production service; local Docker commonly uses
-  // NODE_ENV=production for parity but should not pretend a campus pilot is approved.
-  const releaseChannel = String(
-    process.env.ATTENDANCE_RELEASE_CHANNEL || "production"
-  ).trim().toLowerCase();
-  const isRenderProduction =
-    process.env.NODE_ENV === "production" &&
-    releaseChannel === "production" &&
-    (process.env.RENDER === "true" || Boolean(process.env.RENDER_SERVICE_ID));
-  const biometricReleaseApproved =
-    process.env.BIOMETRIC_PRODUCTION_APPROVED === "true";
-  const biometricReady =
-    !isRenderProduction ||
-    (biometricProviderConfigured && biometricReleaseApproved);
-
-  const ready = mongoReady && redisReady && biometricReady;
-
-  return res.status(ready ? 200 : 503).json({
-    success: ready,
-    status: ready ? "ready" : "not_ready",
-
-    dependencies: {
-      mongodb: mongoReady,
-
-      redis: redisReady,
-      biometricProvider: biometricProviderConfigured,
-      biometricReleaseApproved,
-    },
-
-    requestId: req.id,
-  });
+  const result = evaluateReadiness({ env: process.env, mongoReady: mongoose.connection.readyState === 1, redisReady: redisClient.isReady });
+  return res.status(result.ready ? 200 : 503).json({ success: result.ready, status: result.ready ? "ready" : "not_ready", dependencies: result.dependencies, requirements: result.requirements, requestId: req.id });
 });
 //================================================================================================
 /// routes for all the development

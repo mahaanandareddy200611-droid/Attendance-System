@@ -1,0 +1,33 @@
+name: Staging Smoke Test
+on:
+  workflow_dispatch:
+    inputs:
+      base_url:
+        description: Deployed API origin or URL ending in /api/v1
+        required: true
+        type: string
+      require_biometric:
+        description: Require configured biometric provider
+        required: true
+        default: true
+        type: boolean
+permissions:
+  contents: read
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+        working-directory: backend
+      - run: npm run smoke:deployment
+        working-directory: backend
+        env:
+          STAGING_BASE_URL: ${{ inputs.base_url }}
+          ATTENDANCE_REQUIRE_BIOMETRIC: ${{ inputs.require_biometric }}

@@ -28,6 +28,34 @@ function setStorageEnvironment(t) {
   });
 }
 
+test("version listing parses Backblaze S3 XML and preserves version IDs", () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+  <ListVersionsResult>
+    <Version><Key>attendance-evidence/a.jpg</Key><VersionId>v1</VersionId><IsLatest>false</IsLatest></Version>
+    <DeleteMarker><Key>attendance-evidence/a.jpg</Key><VersionId>marker1</VersionId><IsLatest>true</IsLatest></DeleteMarker>
+    <Version><Key>attendance-evidence/other.jpg</Key><VersionId>other1</VersionId></Version>
+  </ListVersionsResult>`;
+  assert.deepEqual(storage._test.parseObjectVersions(xml), [
+    { key: "attendance-evidence/a.jpg", versionId: "v1", kind: "Version" },
+    { key: "attendance-evidence/a.jpg", versionId: "marker1", kind: "DeleteMarker" },
+    { key: "attendance-evidence/other.jpg", versionId: "other1", kind: "Version" },
+  ]);
+});
+
+test("version listing rejects incomplete provider metadata", () => {
+  assert.throws(
+    () => storage._test.parseObjectVersions("<ListVersionsResult><Version><Key>a.jpg</Key></Version></ListVersionsResult>"),
+    /invalid version metadata/,
+  );
+});
+
+test("SigV4 query parameters are encoded and sorted canonically", () => {
+  assert.equal(
+    storage._test.canonicalizeQuery([["versionId", "a+b/="], ["versions", ""]]),
+    "versionId=a%2Bb%2F%3D&versions=",
+  );
+});
+
 test("object key encoding rejects path traversal and safely encodes path segments", () => {
   assert.equal(storage._test.canonicalKey("evidence/abc/photo.jpg"), "/evidence/abc/photo.jpg");
   assert.equal(storage._test.awsEncode("image name!.jpg"), "image%20name%21.jpg");
@@ -112,6 +140,46 @@ test("object deletion treats a missing object as an idempotent success", async (
   await storage.deleteObject({ key: "evidence/507f1f77bcf86cd799439011/8cb9f8f8-9c75-4b9a-bd45-4cb0424e1e2c.jpg" });
   assert.equal(captured.options.method, "DELETE");
   assert.match(captured.options.headers.Authorization, /Signature=[a-f0-9]{64}$/);
+});
+
+test("Backblaze version purge deletes every version and confirms no versions remain", async (t) => {
+  setStorageEnvironment(t);
+  const previousPurge = process.env.OBJECT_STORAGE_PURGE_VERSIONS;
+  process.env.OBJECT_STORAGE_PURGE_VERSIONS = "true";
+  t.after(() => {
+    if (previousPurge === undefined) delete process.env.OBJECT_STORAGE_PURGE_VERSIONS;
+    else process.env.OBJECT_STORAGE_PURGE_VERSIONS = previousPurge;
+  });
+
+  const originalFetch = global.fetch;
+  let versionsRemaining = [
+    { key: "attendance-evidence/a.jpg", versionId: "old-version", kind: "Version" },
+    { key: "attendance-evidence/a.jpg", versionId: "hide-marker", kind: "DeleteMarker" },
+  ];
+  const deleted = [];
+  global.fetch = async (urlValue, options = {}) => {
+    const url = new URL(String(urlValue));
+    if ((options.method || "GET") === "GET" && url.searchParams.has("versions")) {
+      const xml = versionsRemaining.map((v) =>
+        "<" + v.kind + "><Key>" + v.key + "</Key><VersionId>" + v.versionId +
+        "</VersionId></" + v.kind + ">"
+      ).join("");
+      return new Response("<ListVersionsResult>" + xml + "</ListVersionsResult>", { status: 200 });
+    }
+    if (options.method === "DELETE") {
+      const versionId = url.searchParams.get("versionId");
+      assert.ok(versionId, "purge must specify the exact version ID");
+      deleted.push(versionId);
+      versionsRemaining = versionsRemaining.filter((v) => v.versionId !== versionId);
+      return new Response(null, { status: 204 });
+    }
+    return new Response("unexpected request", { status: 400 });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  await storage.deleteObject({ key: "attendance-evidence/a.jpg" });
+  assert.deepEqual(deleted.sort(), ["hide-marker", "old-version"]);
+  assert.equal(versionsRemaining.length, 0);
 });
 
 test("storage errors do not expose provider response bodies", async (t) => {
