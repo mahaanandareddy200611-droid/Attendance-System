@@ -54,7 +54,7 @@ services:
       - key: ATTENDANCE_SESSION_MINUTES
         value: "60"
       - key: CORS_ORIGINS
-        sync: false
+        value: https://attendance-lecturer-staging.onrender.com
       - key: ATTENDANCE_STUDENT_RATE_CAPACITY
         sync: false
       - key: ATTENDANCE_STUDENT_RATE_REFILL
@@ -109,6 +109,31 @@ services:
         value: "150"
       - key: ATTENDANCE_MAX_GPS_AGE_MS
         value: "120000"
+
+  - type: web
+    name: attendance-lecturer-staging
+    runtime: static
+    branch: main
+    buildCommand: cd lecturer-web && npm ci && npm run build
+    staticPublishPath: ./lecturer-web/dist
+    autoDeployTrigger: off
+    envVars:
+      - key: VITE_API_BASE_URL
+        value: https://attendance-backend-staging.onrender.com/api/v1
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: Referrer-Policy
+        value: strict-origin-when-cross-origin
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
 
   - type: keyvalue
     name: attendance-redis-staging
