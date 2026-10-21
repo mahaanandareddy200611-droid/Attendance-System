@@ -43,7 +43,7 @@ function buildApiBaseUrl(value) {
   if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
     throw new Error("STAGING_BASE_URL must not contain credentials, query, or fragment");
   }
-  const path = url.pathname.replace(/\\/+$/, "");
+  const path = url.pathname.replace(/\/+$/, "");
   return url.origin + (path.endsWith("/api/v1") ? path : path + "/api/v1");
 }
 
