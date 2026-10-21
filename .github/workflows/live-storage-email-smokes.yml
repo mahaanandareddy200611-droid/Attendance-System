@@ -1,0 +1,63 @@
+name: One-Time Live Storage and Email Smokes
+
+on:
+  push:
+    branches:
+      - ops/live-storage-email-smoke
+    paths:
+      - ".github/workflows/live-storage-email-smokes.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backblaze:
+    name: Real Backblaze version-purge smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Upload multiple versions, verify listing, purge and verify zero versions
+        working-directory: backend
+        run: npm run storage:smoke
+        env:
+          OBJECT_STORAGE_ENDPOINT: \${{ secrets.OBJECT_STORAGE_ENDPOINT }}
+          OBJECT_STORAGE_BUCKET: \${{ secrets.OBJECT_STORAGE_BUCKET }}
+          OBJECT_STORAGE_REGION: \${{ vars.OBJECT_STORAGE_REGION || 'us-east-005' }}
+          OBJECT_STORAGE_ACCESS_KEY_ID: \${{ secrets.OBJECT_STORAGE_ACCESS_KEY_ID }}
+          OBJECT_STORAGE_SECRET_ACCESS_KEY: \${{ secrets.OBJECT_STORAGE_SECRET_ACCESS_KEY }}
+          OBJECT_STORAGE_TIMEOUT_MS: "10000"
+          OBJECT_STORAGE_PURGE_VERSIONS: "true"
+  email:
+    name: Real SMTP delivery smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Send one non-sensitive test email to the designated test inbox
+        working-directory: backend
+        run: npm run mail:smoke
+        env:
+          MAIL_SMOKE_TO: \${{ secrets.MAIL_SMOKE_TO }}
+          MAIL_USER: \${{ secrets.MAIL_USER }}
+          MAIL_PASSWORD: \${{ secrets.MAIL_PASSWORD }}
+          MAIL_HOST: \${{ secrets.MAIL_HOST }}
+          MAIL_PORT: \${{ secrets.MAIL_PORT }}
+          MAIL_SECURE: \${{ secrets.MAIL_SECURE }}
