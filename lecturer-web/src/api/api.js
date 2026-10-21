@@ -29,7 +29,7 @@ function resolveApiBaseUrl() {
     url.password ||
     url.search ||
     url.hash ||
-    url.pathname.replace(/\\/+$/, "") !== "/api/v1"
+    url.pathname.replace(/\/+$/, "") !== "/api/v1"
   ) {
     throw new Error("VITE_API_BASE_URL must use HTTPS and end exactly in /api/v1 (without credentials or query parameters).");
   }
