@@ -34,6 +34,12 @@ async function main() {
     await storage.putObject({ key, body: payload, contentType: "image/jpeg" });
     console.log("PASS: second upload created an additional object version");
 
+    const versionsBeforeDelete = await storage._test.listObjectVersions(key);
+    if (versionsBeforeDelete.length < 2) {
+      throw new Error("Version-list check failed: expected at least two versions before permanent deletion");
+    }
+    console.log("PASS: provider version listing returned " + versionsBeforeDelete.length + " versions before deletion");
+
     const publicResponse = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
     if (publicResponse.ok) {
       throw new Error("Privacy check failed: the object can be fetched without a signed URL. Make the bucket private.");
@@ -51,8 +57,13 @@ async function main() {
     const afterDeleteUrl = await storage.createDownloadUrl({ key, expiresInSeconds: 60 });
     const afterDelete = await fetch(afterDeleteUrl, { signal: AbortSignal.timeout(10000) });
     if (afterDelete.ok) throw new Error("Deletion check failed: object remains readable after delete");
+    const versionsAfterDelete = await storage._test.listObjectVersions(key);
+    if (versionsAfterDelete.length !== 0) {
+      throw new Error("Permanent deletion check failed: " + versionsAfterDelete.length + " object versions remain");
+    }
     uploaded = false;
     console.log("PASS: deleted object is no longer readable (HTTP " + afterDelete.status + ")");
+    console.log("PASS: provider version listing confirms zero versions remain");
     console.log("PRIVATE OBJECT STORAGE SMOKE TEST PASSED");
   } finally {
     if (uploaded) {
