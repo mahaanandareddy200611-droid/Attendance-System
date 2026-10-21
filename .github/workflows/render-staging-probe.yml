@@ -28,6 +28,29 @@ jobs:
       - name: Install backend smoke dependencies
         working-directory: backend
         run: npm ci
+      - name: Diagnose live Render DNS and HTTP response
+        shell: bash
+        run: |
+          set +e
+          for host in attendance-backend-staging.onrender.com attendance-lecturer-staging.onrender.com; do
+            echo "=== DNS: $host ==="
+            getent ahostsv4 "$host" || echo "DNS lookup failed for $host"
+          done
+          echo "=== Backend liveness ==="
+          curl -sS --connect-timeout 8 --max-time 20 -D /tmp/api-headers -o /tmp/api-body -w 'backend_http=%{http_code} remote_ip=%{remote_ip} time=%{time_total}\n' https://attendance-backend-staging.onrender.com/api/v1/livez
+          backend_curl=$?
+          cat /tmp/api-headers 2>/dev/null
+          head -c 1000 /tmp/api-body 2>/dev/null
+          echo
+          echo "backend_curl_exit=$backend_curl"
+          echo "=== Lecturer website ==="
+          curl -sS --connect-timeout 8 --max-time 20 -D /tmp/web-headers -o /tmp/web-body -w 'lecturer_http=%{http_code} remote_ip=%{remote_ip} time=%{time_total}\n' https://attendance-lecturer-staging.onrender.com/
+          web_curl=$?
+          cat /tmp/web-headers 2>/dev/null
+          head -c 1000 /tmp/web-body 2>/dev/null
+          echo
+          echo "lecturer_curl_exit=$web_curl"
+          if [ "$backend_curl" -ne 0 ] || [ "$web_curl" -ne 0 ]; then exit 1; fi
       - name: Probe live Render backend, lecturer bundle, and CORS
         working-directory: backend
         run: npm run smoke:deployment
