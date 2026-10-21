@@ -36,6 +36,6 @@ jobs:
       - run: npm run smoke:deployment
         working-directory: backend
         env:
-          STAGING_BASE_URL: \${{ inputs.base_url }}
-          LECTURER_WEB_BASE_URL: \${{ inputs.lecturer_web_url }}
-          ATTENDANCE_REQUIRE_BIOMETRIC: \${{ inputs.require_biometric }}
+          STAGING_BASE_URL: ${{ inputs.base_url }}
+          LECTURER_WEB_BASE_URL: ${{ inputs.lecturer_web_url }}
+          ATTENDANCE_REQUIRE_BIOMETRIC: ${{ inputs.require_biometric }}
