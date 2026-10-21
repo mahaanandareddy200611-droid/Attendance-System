@@ -25,7 +25,14 @@ async function main() {
   try {
     await storage.putObject({ key, body: payload, contentType: "image/jpeg" });
     uploaded = true;
-    console.log("PASS: signed upload returned successfully");
+    console.log("PASS: first signed upload returned successfully");
+
+    // Write the same unique key twice so the real smoke verifies that the
+    // permanent-purge path removes multiple B2 file versions, not just a
+    // single current version. Content is intentionally identical to keep the
+    // smoke payload a valid tiny JPEG while still creating another version.
+    await storage.putObject({ key, body: payload, contentType: "image/jpeg" });
+    console.log("PASS: second upload created an additional object version");
 
     const publicResponse = await fetch(rawUrl, { signal: AbortSignal.timeout(10000) });
     if (publicResponse.ok) {
