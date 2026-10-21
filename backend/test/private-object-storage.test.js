@@ -28,6 +28,34 @@ function setStorageEnvironment(t) {
   });
 }
 
+test("version listing parses Backblaze S3 XML and preserves version IDs", () => {
+  const xml = `<?xml version="1.0" encoding="UTF-8"?>
+  <ListVersionsResult>
+    <Version><Key>attendance-evidence/a.jpg</Key><VersionId>v1</VersionId><IsLatest>false</IsLatest></Version>
+    <DeleteMarker><Key>attendance-evidence/a.jpg</Key><VersionId>marker1</VersionId><IsLatest>true</IsLatest></DeleteMarker>
+    <Version><Key>attendance-evidence/other.jpg</Key><VersionId>other1</VersionId></Version>
+  </ListVersionsResult>`;
+  assert.deepEqual(storage._test.parseObjectVersions(xml), [
+    { key: "attendance-evidence/a.jpg", versionId: "v1", kind: "Version" },
+    { key: "attendance-evidence/a.jpg", versionId: "marker1", kind: "DeleteMarker" },
+    { key: "attendance-evidence/other.jpg", versionId: "other1", kind: "Version" },
+  ]);
+});
+
+test("version listing rejects incomplete provider metadata", () => {
+  assert.throws(
+    () => storage._test.parseObjectVersions("<ListVersionsResult><Version><Key>a.jpg</Key></Version></ListVersionsResult>"),
+    /invalid version metadata/,
+  );
+});
+
+test("SigV4 query parameters are encoded and sorted canonically", () => {
+  assert.equal(
+    storage._test.canonicalizeQuery([["versionId", "a+b/="], ["versions", ""]]),
+    "versionId=a%2Bb%2F%3D&versions=",
+  );
+});
+
 test("object key encoding rejects path traversal and safely encodes path segments", () => {
   assert.equal(storage._test.canonicalKey("evidence/abc/photo.jpg"), "/evidence/abc/photo.jpg");
   assert.equal(storage._test.awsEncode("image name!.jpg"), "image%20name%21.jpg");
