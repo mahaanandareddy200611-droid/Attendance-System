@@ -1,0 +1,37 @@
+name: Render Staging Read-Only Probe
+
+on:
+  push:
+    branches:
+      - ops/render-staging-probe
+    paths:
+      - ".github/workflows/render-staging-probe.yml"
+      - "backend/scripts/deployment-smoke.js"
+      - "backend/package-lock.json"
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 6
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - name: Install backend smoke dependencies
+        working-directory: backend
+        run: npm ci
+      - name: Probe live Render backend, lecturer bundle, and CORS
+        working-directory: backend
+        run: npm run smoke:deployment
+        env:
+          STAGING_BASE_URL: https://attendance-backend-staging.onrender.com/api/v1
+          LECTURER_WEB_BASE_URL: https://attendance-lecturer-staging.onrender.com
+          ATTENDANCE_REQUIRE_BIOMETRIC: "true"
