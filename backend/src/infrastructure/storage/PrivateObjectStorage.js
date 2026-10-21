@@ -17,6 +17,51 @@ function awsEncode(value) {
   );
 }
 
+function canonicalizeQuery(parameters = []) {
+  return parameters
+    .map(([name, value]) => [awsEncode(name), awsEncode(value ?? "")])
+    .sort(([nameA, valueA], [nameB, valueB]) => {
+      if (nameA !== nameB) return nameA < nameB ? -1 : 1;
+      if (valueA === valueB) return 0;
+      return valueA < valueB ? -1 : 1;
+    })
+    .map(([name, value]) => name + "=" + value)
+    .join("&");
+}
+
+function decodeXmlText(value) {
+  return String(value)
+    .replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"')
+    .replace(/&apos;/g, "'")
+    .replace(/&amp;/g, "&")
+    .trim();
+}
+
+function readXmlTag(xml, tagName) {
+  const pattern = new RegExp("<" + tagName + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tagName + ">");
+  const match = pattern.exec(xml);
+  return match ? decodeXmlText(match[1]) : null;
+}
+
+function parseObjectVersions(xml) {
+  const objects = [];
+  for (const tagName of ["Version", "DeleteMarker"]) {
+    const pattern = new RegExp("<" + tagName + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tagName + ">", "g");
+    let match;
+    while ((match = pattern.exec(xml)) !== null) {
+      const key = readXmlTag(match[1], "Key");
+      const versionId = readXmlTag(match[1], "VersionId");
+      if (key === null || versionId === null || versionId === "") {
+        throw new AppError("Private object storage returned invalid version metadata", 503);
+      }
+      objects.push({ key, versionId, kind: tagName });
+    }
+  }
+  return objects;
+}
+
 function getConfiguration(env = process.env) {
   const endpointValue = env.OBJECT_STORAGE_ENDPOINT;
   const bucket = env.OBJECT_STORAGE_BUCKET;
@@ -104,10 +149,13 @@ function makeSignature({ config, date, canonicalRequest }) {
   return { amzDate, scope, signature };
 }
 
-async function requestSigned({ method, key, body, contentType }) {
+async function requestSigned({ method, key, body, contentType, query = [], bucketListing = false }) {
   const config = getConfiguration();
-  const path = buildPath(config, key);
+  const path = bucketListing ? "/" + awsEncode(config.bucket) : buildPath(config, key);
   const url = new URL(path, config.endpoint.origin);
+  const canonicalQuery = canonicalizeQuery(query);
+  if (canonicalQuery) url.search = canonicalQuery;
+
   const payloadHash = sha256(body || Buffer.alloc(0));
   const date = new Date();
   const amzDate = formatAmzDate(date);
@@ -128,7 +176,7 @@ async function requestSigned({ method, key, body, contentType }) {
   const canonicalRequest = [
     method,
     url.pathname,
-    "",
+    canonicalQuery,
     canonicalHeaders,
     signedHeaders,
     payloadHash,
@@ -160,10 +208,54 @@ async function requestSigned({ method, key, body, contentType }) {
     throw new AppError("Private object storage is temporarily unavailable", 503);
   }
 
-  if (method === "DELETE" && response.status === 404) return;
+  if (method === "DELETE" && response.status === 404) return response;
   if (!response.ok) {
     throw new AppError("Private object storage request failed", 503);
   }
+  return response;
+}
+
+/*
+ * Backblaze B2 buckets are versioned. A plain S3 DELETE creates a hide marker
+ * and leaves prior versions stored. If version purging is enabled, enumerate
+ * and permanently delete every version and delete marker for this exact key.
+ * The feature is opt-in so providers with different versioning support can
+ * retain their native delete behavior.
+ */
+async function listObjectVersions(key) {
+  canonicalKey(key);
+  const response = await requestSigned({
+    method: "GET",
+    key,
+    bucketListing: true,
+    query: [["versions", ""], ["prefix", key]],
+  });
+  const xml = await response.text();
+  if (!/<ListVersionsResult(?:\\s|>)/.test(xml)) {
+    throw new AppError("Private object storage returned invalid version listing", 503);
+  }
+  return parseObjectVersions(xml).filter((item) => item.key === key);
+}
+
+async function purgeObjectVersions({ key, maxBatches = 100 } = {}) {
+  canonicalKey(key);
+  let deletedVersions = 0;
+
+  for (let batch = 0; batch < maxBatches; batch += 1) {
+    const versions = await listObjectVersions(key);
+    if (versions.length === 0) return { deletedVersions };
+
+    for (const version of versions) {
+      await requestSigned({
+        method: "DELETE",
+        key,
+        query: [["versionId", version.versionId]],
+      });
+      deletedVersions += 1;
+    }
+  }
+
+  throw new AppError("Private object storage version deletion could not be verified", 503);
 }
 
 exports.putObject = async ({ key, body, contentType = "image/jpeg" }) => {
@@ -179,6 +271,10 @@ exports.putObject = async ({ key, body, contentType = "image/jpeg" }) => {
 exports.getConfiguration = getConfiguration;
 
 exports.deleteObject = async ({ key }) => {
+  if (String(process.env.OBJECT_STORAGE_PURGE_VERSIONS || "").trim().toLowerCase() === "true") {
+    await purgeObjectVersions({ key });
+    return;
+  }
   await requestSigned({ method: "DELETE", key });
 };
 
@@ -217,4 +313,4 @@ exports.createDownloadUrl = async ({ key, expiresInSeconds }) => {
   return url.origin + url.pathname + "?" + canonicalQuery + "&X-Amz-Signature=" + signature;
 };
 
-exports._test = { awsEncode, canonicalKey, getConfiguration, formatAmzDate, sha256 };
+exports._test = { awsEncode, canonicalKey, canonicalizeQuery, decodeXmlText, parseObjectVersions, purgeObjectVersions, getConfiguration, formatAmzDate, sha256 };
