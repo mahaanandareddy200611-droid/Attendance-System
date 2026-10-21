@@ -33,6 +33,20 @@ function buildLecturerSiteUrl(value) {
   return url.origin;
 }
 
+function buildApiBaseUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    throw new Error("STAGING_BASE_URL must be a valid HTTP(S) URL");
+  }
+  if (!["https:", "http:"].includes(url.protocol) || url.username || url.password || url.search || url.hash) {
+    throw new Error("STAGING_BASE_URL must not contain credentials, query, or fragment");
+  }
+  const path = url.pathname.replace(/\/+$/, "");
+  return url.origin + (path.endsWith("/api/v1") ? path : path + "/api/v1");
+}
+
 async function fetchWithTimeout(fetchImpl, url, options = {}, label, timeoutMs = 60000) {
   try {
     return await fetchImpl(url, { ...options, signal: AbortSignal.timeout(Math.max(1000, Math.min(Number(timeoutMs) || 60000, 60000))) });
@@ -41,8 +55,9 @@ async function fetchWithTimeout(fetchImpl, url, options = {}, label, timeoutMs =
   }
 }
 
-async function verifyLecturerSite({ lecturerWebBaseUrl, fetchImpl }) {
+async function verifyLecturerSite({ lecturerWebBaseUrl, expectedApiBaseUrl, fetchImpl }) {
   const origin = buildLecturerSiteUrl(lecturerWebBaseUrl);
+  const apiBaseUrl = buildApiBaseUrl(expectedApiBaseUrl);
   const indexResponse = await fetchWithTimeout(
     fetchImpl,
     origin + "/",
@@ -88,7 +103,10 @@ async function verifyLecturerSite({ lecturerWebBaseUrl, fetchImpl }) {
   if (!bundleText.trim()) {
     throw new Error("Lecturer web JavaScript bundle is empty");
   }
-  return { status: indexResponse.status, bundleStatus: bundleResponse.status, origin };
+  if (!bundleText.includes(apiBaseUrl)) {
+    throw new Error("Lecturer web JavaScript bundle does not contain the expected API base URL " + apiBaseUrl);
+  }
+  return { status: indexResponse.status, bundleStatus: bundleResponse.status, origin, apiBaseUrl };
 }
 
 async function verifyCors({ baseUrl, lecturerOrigin, fetchImpl }) {
@@ -160,8 +178,8 @@ async function runDeploymentSmoke({
     result[name] = { status: response.status, state: body.status };
   }
 
-  const lecturer = await verifyLecturerSite({ lecturerWebBaseUrl, fetchImpl });
-  result.lecturerWeb = { status: lecturer.status, bundleStatus: lecturer.bundleStatus };
+  const lecturer = await verifyLecturerSite({ lecturerWebBaseUrl, expectedApiBaseUrl: baseUrl, fetchImpl });
+  result.lecturerWeb = { status: lecturer.status, bundleStatus: lecturer.bundleStatus, apiBaseUrl: lecturer.apiBaseUrl };
   result.cors = await verifyCors({ baseUrl, lecturerOrigin: lecturer.origin, fetchImpl });
   return result;
 }
@@ -185,4 +203,4 @@ if (require.main === module) {
     });
 }
 
-module.exports = { buildEndpointUrl, buildLecturerSiteUrl, runDeploymentSmoke, verifyLecturerSite, verifyCors };
+module.exports = { buildEndpointUrl, buildApiBaseUrl, buildLecturerSiteUrl, runDeploymentSmoke, verifyLecturerSite, verifyCors };
