@@ -96,6 +96,8 @@ services:
         sync: false
       - key: OBJECT_STORAGE_TIMEOUT_MS
         value: "10000"
+      - key: OBJECT_STORAGE_PURGE_VERSIONS
+        value: "true"
       - key: MEDIA_RETENTION_DAYS
         value: "30"
       - key: MEDIA_URL_TTL_SECONDS
