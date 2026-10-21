@@ -62,11 +62,11 @@ async function requestJson({ baseUrl, apiKey, path, method = "GET", body, fetchI
   return { response, data };
 }
 
-async function assertLiveFace({ baseUrl, apiKey, image, fetchImpl, timeoutMs }) {
+async function assertLiveFace({ baseUrl, apiKey, image, collectionId, fetchImpl, timeoutMs }) {
   const form = new FormData();
   form.append("image", new Blob([image.imageBuffer], { type: image.type }), image.fileName);
   form.append("max_faces", "2");
-  form.append("collection_id", process.env.BIOMETRIC_COLLECTION_ID || "students");
+  form.append("collection_id", collectionId);
   const { data } = await requestJson({
     baseUrl, apiKey, path: "/v1/detect", method: "POST",
     body: form, fetchImpl, timeoutMs,
@@ -119,8 +119,8 @@ async function runBiometricProviderSmoke({
     throw new Error("Use two different captures of the same consenting test subject");
   }
 
-  await assertLiveFace({ baseUrl, apiKey, image: enrollmentImage, fetchImpl, timeoutMs });
-  await assertLiveFace({ baseUrl, apiKey, image: verificationImage, fetchImpl, timeoutMs });
+  await assertLiveFace({ baseUrl, apiKey, image: enrollmentImage, collectionId, fetchImpl, timeoutMs });
+  await assertLiveFace({ baseUrl, apiKey, image: verificationImage, collectionId, fetchImpl, timeoutMs });
 
   const smokeExternalId = "attendance-smoke-" + crypto.randomUUID();
   const enrollment = new FormData();
