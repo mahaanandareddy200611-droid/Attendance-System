@@ -96,7 +96,7 @@ test("smoke deletes the temporary provider identity when matching fails", async 
   const provider = stubProvider({ match: false });
   await assert.rejects(
     runBiometricProviderSmoke({ env, fetchImpl: provider.fetchImpl, readImage }),
-    /did not match the enrolled test identity/,
+    /did not match the second capture to the enrolled test identity/,
   );
   assert.deepEqual(provider.state, { deleted: true, enrolled: true });
 });
