@@ -12,7 +12,8 @@
     "smoke:deployment": "node scripts/deployment-smoke.js",
     "mail:smoke": "node scripts/mail-smoke.js",
     "biometric:smoke": "node scripts/biometric-provider-smoke.js",
-    "password-recovery:smoke": "node scripts/password-recovery-smoke.js"
+    "password-recovery:smoke": "node scripts/password-recovery-smoke.js",
+    "biometric:bootstrap": "node scripts/bootstrap-biometric-collection.js"
   },
   "keywords": [],
   "author": "",

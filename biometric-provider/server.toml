@@ -1,0 +1,22 @@
+# API-only configuration. The startup installer turns on liveness after
+# the model licence acceptance gate and writes the persistent model bundle.
+[inference]
+max_concurrency = 2
+addons = []
+liveness_mode = "normal"
+liveness_threshold = 0.8
+liveness_compare_scope = "both"
+liveness_on_registration = false
+
+[addons]
+auto_download = []
+
+[detection]
+input_sizes = [[96, 96], [512, 512]]
+threshold = 0.50
+nms_threshold = 0.40
+single_face_selection = "center_largest"
+max_detected_faces = 2
+
+[web]
+disabled = true

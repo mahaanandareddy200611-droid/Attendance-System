@@ -36,6 +36,15 @@ Do not put server credentials in Vite or Expo public environment variables.
 6. Test on a physical phone: native camera, SecureStore/device-key signing, location permission denial and network reachability. Expo web export does not validate native behavior.
 7. CI includes 300 concurrent test submissions against CI services. Also load-test staging at expected classroom scale with synthetic accounts and inspect p95/p99 latency, errors, connection pools, and logs.
 
+
+### Dedicated InsightFace staging provider
+
+- `biometric-provider/render.yaml` is a separate, optional Render Blueprint for the compatible provider. It uses the pinned `ghcr.io/deepinsight/insightface-server:0.3.1-cpu` image, API-only mode, bearer-key authentication, and a 5 GB persistent disk for `/data` (including SQLite and `/data/models`).
+- The model installer is deliberately gated by the required `BIOMETRIC_MODEL_LICENSE_ACCEPTED=true` environment setting. Read the selected model's terms first. Public InsightFace pretrained models are for non-commercial research unless separate authorization is obtained; do not set the flag if the intended use is outside the licence. The image has no model weights and will not start before this gate is satisfied.
+- This provider is not free: Render requires a paid service for persistent disks. The current `1c-2g` instance plus 5 GB disk has recurring compute and storage cost; review current Render pricing before provisioning. No service was deployed by committing this template.
+- After creating the provider Blueprint and confirming its `/v1/health` endpoint, set `BIOMETRIC_BASE_URL` to the provider's HTTPS origin and set backend `BIOMETRIC_API_KEY` to the exact same secret as provider `INSIGHTFACE_API_KEY`. Then run `cd backend && npm ci && npm run biometric:bootstrap` to create (or validate) the empty `students` Collection, and `npm run biometric:smoke` with two different captures of one consenting test subject. Never use live student photos for this smoke.
+- The live-image smoke does not prove presentation-attack resistance against prints, screen replay or deepfakes. Keep `BIOMETRIC_PRODUCTION_APPROVED=false` until PAD testing, privacy/institution review, retention/deletion checks and a supervised pilot have passed.
+
 ## 4. Biometric and production safety
 The new active-sequence integration test uses mocked provider detection so it validates challenge binding, ordering, assertion creation and replay rejection. It does not prove real camera capture, face matching, active presentation-attack detection (PAD), model licence, accuracy or spoof resistance. Three head-turn frames alone are not robust PAD.
 Do not collect actual student biometric data until provider behaviour, model/licence, independent PAD, privacy/institution approval, retention/deletion policy, incident response and supervised pilot are reviewed.
