@@ -2,7 +2,7 @@
 
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { buildEndpointUrl, buildLecturerSiteUrl, runDeploymentSmoke } = require("../scripts/deployment-smoke");
+const { buildEndpointUrl, buildApiBaseUrl, buildLecturerSiteUrl, runDeploymentSmoke } = require("../scripts/deployment-smoke");
 
 function healthyJson(url) {
   const name = new URL(url).pathname.split("/").at(-1);
@@ -35,7 +35,7 @@ function fullSmokeFetch(urlValue, options = {}) {
     ));
   }
   if (url.hostname === "lecturer.example.test" && url.pathname === "/assets/index-abc123.js") {
-    return Promise.resolve(new Response("const app = true;", { status: 200, headers: { "content-type": "application/javascript" } }));
+    return Promise.resolve(new Response('const apiBaseUrl = "https://api.example.test/api/v1"; const app = true;', { status: 200, headers: { "content-type": "application/javascript" } }));
   }
   return Promise.resolve(new Response(JSON.stringify(healthyJson(url)), {
     status: 200,
@@ -47,6 +47,12 @@ test("smoke URL normalizes API prefix and rejects credentialed URLs", () => {
   assert.equal(buildEndpointUrl("https://api.example.test", "livez").href, "https://api.example.test/api/v1/livez");
   assert.equal(buildEndpointUrl("https://api.example.test/api/v1/", "readyz").href, "https://api.example.test/api/v1/readyz");
   assert.throws(() => buildEndpointUrl("https://u:p@example.test", "health"), /credentials/);
+});
+
+test("API base URL normalizes to the /api/v1 prefix and rejects credentials", () => {
+  assert.equal(buildApiBaseUrl("https://api.example.test"), "https://api.example.test/api/v1");
+  assert.equal(buildApiBaseUrl("https://api.example.test/api/v1/"), "https://api.example.test/api/v1");
+  assert.throws(() => buildApiBaseUrl("https://u:p@api.example.test"), /credentials/);
 });
 
 test("lecturer web URL must be an HTTPS origin outside local development", () => {
@@ -63,7 +69,7 @@ test("smoke checks backend health, lecturer bundle, and exact-origin CORS prefli
     fetchImpl: fullSmokeFetch,
   });
   assert.deepEqual(Object.keys(result), ["livez", "health", "readyz", "lecturerWeb", "cors"]);
-  assert.deepEqual(result.lecturerWeb, { status: 200, bundleStatus: 200 });
+  assert.deepEqual(result.lecturerWeb, { status: 200, bundleStatus: 200, apiBaseUrl: "https://api.example.test/api/v1" });
   assert.equal(result.cors.allowedOrigin, "https://lecturer.example.test");
 });
 
@@ -98,7 +104,7 @@ test("smoke fails if CORS does not allow the deployed lecturer origin", async ()
       return new Response('<html><body><div id="root"></div><script src="/assets/app.js"></script></body></html>', { status: 200 });
     }
     if (url.hostname === "lecturer.example.test") {
-      return new Response("const app=true", { status: 200, headers: { "content-type": "application/javascript" } });
+      return new Response('const apiBaseUrl = "https://api.example.test/api/v1"; const app=true', { status: 200, headers: { "content-type": "application/javascript" } });
     }
     return new Response(JSON.stringify(healthyJson(url)), { status: 200, headers: { "content-type": "application/json" } });
   };
@@ -123,11 +129,33 @@ test("smoke fails when backend readiness fails", async () => {
     if (url.hostname === "lecturer.example.test" && url.pathname === "/") {
       return new Response('<html><body><div id="root"></div><script src="/assets/app.js"></script></body></html>', { status: 200 });
     }
-    if (url.hostname === "lecturer.example.test") return new Response("bundle", { status: 200 });
+    if (url.hostname === "lecturer.example.test") return new Response('const apiBaseUrl = "https://api.example.test/api/v1";', { status: 200, headers: { "content-type": "application/javascript" } });
     return new Response(JSON.stringify(healthyJson(url)), { status: 200 });
   };
   await assert.rejects(
     runDeploymentSmoke({ baseUrl: "https://api.example.test", lecturerWebBaseUrl: "https://lecturer.example.test", fetchImpl }),
     /readyz is not healthy/,
+  );
+});
+
+
+test("smoke fails if the lecturer bundle has the wrong API origin baked into it", async () => {
+  const fetchImpl = async (urlValue, options = {}) => {
+    const url = new URL(String(urlValue));
+    if (options.method === "OPTIONS") return new Response(null, { status: 204, headers: {
+      "access-control-allow-origin": options.headers.Origin,
+      "access-control-allow-methods": "GET,POST,OPTIONS",
+    } });
+    if (url.hostname === "lecturer.example.test" && url.pathname === "/") {
+      return new Response('<html><body><div id="root"></div><script src="/assets/app.js"></script></body></html>', { status: 200, headers: { "content-type": "text/html" } });
+    }
+    if (url.hostname === "lecturer.example.test") {
+      return new Response('const apiBaseUrl = "https://stale-api.example.test/api/v1";', { status: 200, headers: { "content-type": "application/javascript" } });
+    }
+    return new Response(JSON.stringify(healthyJson(url)), { status: 200, headers: { "content-type": "application/json" } });
+  };
+  await assert.rejects(
+    runDeploymentSmoke({ baseUrl: "https://api.example.test", lecturerWebBaseUrl: "https://lecturer.example.test", fetchImpl }),
+    /does not contain the expected API base URL/,
   );
 });
