@@ -50,7 +50,7 @@ function parseObjectVersions(xml) {
   // S3 ListObjectVersions interleaves Version and DeleteMarker elements in
   // provider order. Scan both tag types with one expression so we preserve
   // that order rather than grouping every Version before every DeleteMarker.
-  const pattern = new RegExp("<(Version|DeleteMarker)(?:\\\\s[^>]*)?>([\\\\s\\S]*?)</\\\\1>", "g");
+  const pattern = new RegExp("<(Version|DeleteMarker)(?:\\s[^>]*)?>([\\s\\S]*?)</\\1>", "g");
   let match;
   while ((match = pattern.exec(xml)) !== null) {
     const kind = match[1];
