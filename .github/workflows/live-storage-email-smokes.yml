@@ -55,7 +55,7 @@ jobs:
         working-directory: backend
         run: npm run mail:smoke
         env:
-          MAIL_SMOKE_TO: ${{ secrets.MAIL_SMOKE_TO }}
+          MAIL_SMOKE_TO: ${{ secrets.MAIL_SMOKE_TO || secrets.MAIL_USER }}
           MAIL_USER: ${{ secrets.MAIL_USER }}
           MAIL_PASSWORD: ${{ secrets.MAIL_PASSWORD }}
           MAIL_HOST: ${{ secrets.MAIL_HOST }}
