@@ -1,4 +1,5 @@
 name: Staging Smoke Test
+
 on:
   workflow_dispatch:
     inputs:
@@ -6,17 +7,23 @@ on:
         description: Deployed API origin or URL ending in /api/v1
         required: true
         type: string
+      lecturer_web_url:
+        description: Deployed lecturer static-site HTTPS origin
+        required: true
+        type: string
       require_biometric:
         description: Require configured biometric provider
         required: true
         default: true
         type: boolean
+
 permissions:
   contents: read
+
 jobs:
   smoke:
     runs-on: ubuntu-latest
-    timeout-minutes: 3
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -29,5 +36,6 @@ jobs:
       - run: npm run smoke:deployment
         working-directory: backend
         env:
-          STAGING_BASE_URL: ${{ inputs.base_url }}
-          ATTENDANCE_REQUIRE_BIOMETRIC: ${{ inputs.require_biometric }}
+          STAGING_BASE_URL: \${{ inputs.base_url }}
+          LECTURER_WEB_BASE_URL: \${{ inputs.lecturer_web_url }}
+          ATTENDANCE_REQUIRE_BIOMETRIC: \${{ inputs.require_biometric }}
