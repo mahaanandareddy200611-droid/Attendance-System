@@ -231,7 +231,7 @@ async function listObjectVersions(key) {
     query: [["versions", ""], ["prefix", key]],
   });
   const xml = await response.text();
-  if (!/<ListVersionsResult(?:\\s|>)/.test(xml)) {
+  if (!/<ListVersionsResult(?:\s|>)/.test(xml)) {
     throw new AppError("Private object storage returned invalid version listing", 503);
   }
   return parseObjectVersions(xml).filter((item) => item.key === key);
