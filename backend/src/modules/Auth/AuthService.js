@@ -102,6 +102,8 @@ exports.forgotPassword = async (email) => {
   user.passwordResetOtpAttempts = 0;
 
   user.passwordResetVerifiedUntil = null;
+  user.passwordResetTokenHash = null;
+  user.passwordResetTokenExpires = null;
 
   await user.save();
 
@@ -142,13 +144,8 @@ exports.verifyResetOTP = async (otp, email) => {
     }
 
     const now = new Date();
-
-    const user = await User.findOne({
-        email: normalizedEmail
-    }).select(
-        "+passwordResetOtpHash " +
-        "+passwordResetOtpExpires " +
-        "+passwordResetOtpAttempts"
+    const user = await User.findOne({ email: normalizedEmail }).select(
+        "+passwordResetOtpHash +passwordResetOtpExpires +passwordResetOtpAttempts"
     );
 
     if (
@@ -164,23 +161,13 @@ exports.verifyResetOTP = async (otp, email) => {
         throw new AppError("Too many incorrect OTP attempts", 429);
     }
 
-    const suppliedHash = crypto
-        .createHash("sha256")
-        .update(String(otp))
-        .digest();
-
-    const storedHash = Buffer.from(
-        user.passwordResetOtpHash,
-        "hex"
-    );
-
+    const suppliedHash = crypto.createHash("sha256").update(String(otp)).digest();
+    const storedHash = Buffer.from(user.passwordResetOtpHash, "hex");
     const matches =
         storedHash.length === suppliedHash.length &&
         crypto.timingSafeEqual(storedHash, suppliedHash);
 
     if (!matches) {
-        // The condition and increment execute atomically in MongoDB.
-        // Concurrent attempts cannot all overwrite the same counter.
         const attemptUpdate = await User.updateOne(
             {
                 _id: user._id,
@@ -188,23 +175,21 @@ exports.verifyResetOTP = async (otp, email) => {
                 passwordResetOtpExpires: { $gt: now },
                 passwordResetOtpAttempts: { $lt: 5 }
             },
-            {
-                $inc: { passwordResetOtpAttempts: 1 }
-            }
+            { $inc: { passwordResetOtpAttempts: 1 } }
         );
 
         if (attemptUpdate.matchedCount !== 1) {
             throw new AppError("Invalid or expired OTP", 400);
         }
-
         throw new AppError("Incorrect OTP", 400);
     }
 
-    // Consume the OTP atomically. Only one concurrent correct request
-    // can match the original hash and successfully create the verified window.
-    const verifiedUntil = new Date(
-        now.getTime() + 10 * 60 * 1000
-    );
+    // Return a high-entropy one-time token to the client; only its hash is stored.
+    // The OTP is consumed in the same conditional write so concurrent verifications
+    // cannot mint multiple valid reset tokens from one code.
+    const resetToken = crypto.randomBytes(32).toString("base64url");
+    const resetTokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
+    const resetTokenExpires = new Date(now.getTime() + 10 * 60 * 1000);
 
     const verificationUpdate = await User.updateOne(
         {
@@ -215,7 +200,9 @@ exports.verifyResetOTP = async (otp, email) => {
         },
         {
             $set: {
-                passwordResetVerifiedUntil: verifiedUntil,
+                passwordResetTokenHash: resetTokenHash,
+                passwordResetTokenExpires: resetTokenExpires,
+                passwordResetVerifiedUntil: null,
                 passwordResetOtpHash: null,
                 passwordResetOtpExpires: null,
                 passwordResetOtpAttempts: 0
@@ -227,65 +214,73 @@ exports.verifyResetOTP = async (otp, email) => {
         throw new AppError("Invalid or expired OTP", 400);
     }
 
-    return { verified: true };
+    return { verified: true, resetToken };
 };
 
-exports.password = async (password, email) => {
+exports.password = async (password, email, resetToken) => {
     const normalizedEmail = String(email || "").trim().toLowerCase();
 
-    if (!password || !normalizedEmail) {
-        throw new AppError(
-            "Password-reset authorization is invalid or expired",
-            400
-        );
+    if (
+        typeof password !== "string" ||
+        !password ||
+        !normalizedEmail ||
+        typeof resetToken !== "string" ||
+        !/^[A-Za-z0-9_-]{43}$/.test(resetToken)
+    ) {
+        throw new AppError("Password-reset authorization is invalid or expired", 400);
     }
 
     const now = new Date();
-
-    const user = await User.findOne({
-        email: normalizedEmail
-    }).select("+passwordResetVerifiedUntil");
-
-    if (
-        !user ||
-        !user.passwordResetVerifiedUntil ||
-        user.passwordResetVerifiedUntil.getTime() <= now.getTime()
-    ) {
-        throw new AppError(
-            "Password-reset authorization is invalid or expired",
-            400
-        );
-    }
-
+    const resetTokenHash = crypto.createHash("sha256").update(resetToken).digest("hex");
     const hashedPassword = await bcrypt.hash(password, 12);
 
-    // The unexpired window is part of the database predicate.
-    // The first successful update clears it; a racing update cannot reuse it.
+    // The hash, expiry and account are bound into one atomic conditional update.
+    // Clearing the token in the same write makes it single-use under concurrent retries.
     const result = await User.updateOne(
         {
-            _id: user._id,
-            passwordResetVerifiedUntil: { $gt: now }
+            email: normalizedEmail,
+            passwordResetTokenHash: resetTokenHash,
+            passwordResetTokenExpires: { $gt: now }
         },
         {
-    $set: {
-        password: hashedPassword,
-        passwordResetVerifiedUntil: null
-    },
-    $inc: {
-        tokenVersion: 1
-    }
-}
+            $set: {
+                password: hashedPassword,
+                passwordResetTokenHash: null,
+                passwordResetTokenExpires: null,
+                passwordResetVerifiedUntil: null,
+                passwordResetOtpHash: null,
+                passwordResetOtpExpires: null,
+                passwordResetOtpAttempts: 0
+            },
+            $inc: { tokenVersion: 1 }
+        }
     );
 
     if (result.matchedCount !== 1) {
-        throw new AppError(
-            "Password-reset authorization is invalid or expired",
-            400
-        );
+        throw new AppError("Password-reset authorization is invalid or expired", 400);
     }
 
     return { updated: true };
 };
+
+exports.Logout = async (userId) => {
+    if (!userId) {
+        throw new AppError("Authentication required", 401);
+    }
+
+    const result = await User.updateOne(
+        { _id: userId, status: "ACTIVE" },
+        { $inc: { tokenVersion: 1 } }
+    );
+
+    if (result.matchedCount !== 1) {
+        throw new AppError("Session is no longer valid. Please log in again.", 401);
+    }
+
+    // tokenVersion is account-scoped, so all existing JWTs are revoked.
+    return { revoked: true };
+};
+
 exports.GetCurrentUser = async (userId) => {
   if (!userId) {
     throw new AppError("Authentication required", 401);

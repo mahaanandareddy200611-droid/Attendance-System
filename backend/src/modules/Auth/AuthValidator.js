@@ -42,6 +42,7 @@ exports.forgotPassword = joi.object({
 exports.newpassword = joi.object({
   email: joi.string().lowercase().email().trim().required(),
   password: joi.string().min(6).required(),
+  resetToken: joi.string().pattern(/^[A-Za-z0-9_-]{43}$/).required(),
 });
 
 exports.otp = joi.object({

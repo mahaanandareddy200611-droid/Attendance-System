@@ -84,9 +84,13 @@ async function runPasswordRecoverySmoke({
   if (verified.status !== 200 || verified.data?.success !== true) {
     throw new Error("OTP verification failed (HTTP " + verified.status + ")");
   }
+  const resetToken = verified.data?.resetToken;
+  if (typeof resetToken !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(resetToken)) {
+    throw new Error("OTP verification did not return a valid one-time reset token");
+  }
 
   const reset = await callApi({
-    baseUrl, path: "/auth/reset-password", body: { email, password: newPassword }, fetchImpl, timeoutMs,
+    baseUrl, path: "/auth/reset-password", body: { email, password: newPassword, resetToken }, fetchImpl, timeoutMs,
   });
   if (reset.status !== 200 || reset.data?.success !== true) {
     throw new Error("Password reset failed (HTTP " + reset.status + ")");

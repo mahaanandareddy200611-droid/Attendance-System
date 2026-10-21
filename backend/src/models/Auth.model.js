@@ -93,6 +93,18 @@ const AuthSchema = new mongoose.Schema(
             type: Date,
             default: null,
             select: false,
+        },
+
+        passwordResetTokenHash: {
+            type: String,
+            default: null,
+            select: false,
+        },
+
+        passwordResetTokenExpires: {
+            type: Date,
+            default: null,
+            select: false,
         }
     },
     {

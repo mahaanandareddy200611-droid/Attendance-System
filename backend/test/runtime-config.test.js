@@ -115,3 +115,36 @@ test("production rejects an HTTP biometric provider to protect the bearer API ke
     { valid: true },
   );
 });
+
+
+test("production rejects loopback and local-only biometric provider URLs", () => {
+  const localOnlyUrls = [
+    "https://localhost",
+    "https://provider.localhost",
+    "https://127.0.0.1:8000",
+    "https://127.12.34.56:9000",
+    "https://[::1]:8000",
+    "https://0.0.0.0:8000",
+    "https://host.docker.internal:8000",
+    "https://host.containers.internal:8000",
+  ];
+
+  for (const BIOMETRIC_BASE_URL of localOnlyUrls) {
+    assert.throws(
+      () => validateRuntimeConfig({ ...valid, NODE_ENV: "production", BIOMETRIC_BASE_URL }),
+      (error) => error.missingOrInvalid.some((key) => key.startsWith("BIOMETRIC_BASE_URL")),
+      BIOMETRIC_BASE_URL,
+    );
+  }
+});
+
+test("development can use a local biometric provider", () => {
+  assert.deepEqual(
+    validateRuntimeConfig({
+      ...valid,
+      NODE_ENV: "development",
+      BIOMETRIC_BASE_URL: "http://127.0.0.1:8000",
+    }),
+    { valid: true },
+  );
+});

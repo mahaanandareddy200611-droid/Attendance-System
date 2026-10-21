@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   GetCurrentUser,
   Login as loginRequest,
+  Logout as logoutRequest,
 } from "../services/auth.service";
 import { previewUser } from "../api/previewAdapter";
 import { AuthContext } from "./AuthContext";
@@ -32,10 +33,22 @@ export function AuthProvider({ children }) {
   const [user, setUser] = useState(previewMode);
   const [loading, setLoading] = useState(!previewMode);
 
-  const logout = useCallback(() => {
-    clearStoredSession();
-    setUser(null);
-  }, []);
+  const logout = useCallback(async () => {
+    const hasToken = Boolean(
+      sessionStorage.getItem("token") || localStorage.getItem("token"),
+    );
+
+    try {
+      if (hasToken && !previewMode) {
+        await logoutRequest();
+      }
+    } catch {
+      // Always end the local session even when the API is unavailable.
+    } finally {
+      clearStoredSession();
+      setUser(null);
+    }
+  }, [previewMode]);
 
   useEffect(() => {
     if (previewMode) return undefined;
