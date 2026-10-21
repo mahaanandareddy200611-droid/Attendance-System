@@ -99,3 +99,19 @@ test("provider URLs cannot embed credentials", () => {
     (error) => error.missingOrInvalid.includes("BIOMETRIC_BASE_URL"),
   );
 });
+
+
+test("production rejects an HTTP biometric provider to protect the bearer API key", () => {
+  assert.throws(
+    () => validateRuntimeConfig({
+      ...valid,
+      NODE_ENV: "production",
+      BIOMETRIC_BASE_URL: "http://biometric.example.test",
+    }),
+    (error) => error.missingOrInvalid.some((key) => key.startsWith("BIOMETRIC_BASE_URL")),
+  );
+  assert.deepEqual(
+    validateRuntimeConfig({ ...valid, NODE_ENV: "production" }),
+    { valid: true },
+  );
+});
