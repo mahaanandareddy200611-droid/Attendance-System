@@ -62,6 +62,7 @@ $sensitiveLocals = @()
 Push-Location $backendDir
 try {
     $null = Get-ConfiguredValue -Name 'STAGING_BASE_URL' -Prompt 'Deployed backend URL (HTTPS origin or URL ending /api/v1)'
+    $null = Get-ConfiguredValue -Name 'LECTURER_WEB_BASE_URL' -Prompt 'Deployed lecturer web HTTPS origin'
     $null = Get-ConfiguredValue -Name 'OBJECT_STORAGE_ENDPOINT' -Prompt 'Backblaze B2 S3 endpoint, e.g. https://s3.us-east-005.backblazeb2.com'
     $null = Get-ConfiguredValue -Name 'OBJECT_STORAGE_BUCKET' -Prompt 'Private B2 bucket name'
     $null = Get-ConfiguredValue -Name 'OBJECT_STORAGE_REGION' -Prompt 'B2 region, e.g. us-east-005'

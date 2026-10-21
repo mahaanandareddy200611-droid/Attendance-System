@@ -41,10 +41,10 @@ async function main() {
     console.log("PASS: signed download returned the exact uploaded bytes");
 
     await storage.deleteObject({ key });
-    uploaded = false;
     const afterDeleteUrl = await storage.createDownloadUrl({ key, expiresInSeconds: 60 });
     const afterDelete = await fetch(afterDeleteUrl, { signal: AbortSignal.timeout(10000) });
     if (afterDelete.ok) throw new Error("Deletion check failed: object remains readable after delete");
+    uploaded = false;
     console.log("PASS: deleted object is no longer readable (HTTP " + afterDelete.status + ")");
     console.log("PRIVATE OBJECT STORAGE SMOKE TEST PASSED");
   } finally {

@@ -38,7 +38,7 @@ function validateRuntimeConfig(env = process.env) {
     }
 
     if (isTrue(env.ATTENDANCE_REQUIRE_BIOMETRIC)) {
-        if (!isUrl(env.BIOMETRIC_BASE_URL, ["http:", "https:"])) invalid.push("BIOMETRIC_BASE_URL");
+        if (!isUrl(env.BIOMETRIC_BASE_URL, env.NODE_ENV === "production" ? ["https:"] : ["http:", "https:"])) invalid.push("BIOMETRIC_BASE_URL (HTTPS required in production)");
         if (!String(env.BIOMETRIC_API_KEY || "").trim()) invalid.push("BIOMETRIC_API_KEY");
     }
 
