@@ -6,7 +6,7 @@ addons = []
 liveness_mode = "normal"
 liveness_threshold = 0.8
 liveness_compare_scope = "both"
-liveness_on_registration = false
+liveness_on_registration = true
 
 [addons]
 auto_download = []

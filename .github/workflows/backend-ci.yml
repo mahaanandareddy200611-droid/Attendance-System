@@ -4,6 +4,7 @@ on:
   push:
     paths:
       - "backend/**"
+      - "biometric-provider/**"
       - ".github/workflows/backend-ci.yml"
       - "render.yaml"
       - "backend/render.yaml"
@@ -11,6 +12,7 @@ on:
   pull_request:
     paths:
       - "backend/**"
+      - "biometric-provider/**"
       - ".github/workflows/backend-ci.yml"
       - "render.yaml"
       - "backend/render.yaml"
@@ -70,3 +72,9 @@ jobs:
 
       - name: Build the production Docker image used by Render
         run: docker build --pull --tag attendance-backend:ci --file backend/Dockerfile backend
+
+      - name: Validate biometric provider startup shell
+        run: sh -n biometric-provider/entrypoint.sh
+
+      - name: Build the licensed-gated biometric provider image
+        run: docker build --pull --tag attendance-biometric:ci --file biometric-provider/Dockerfile biometric-provider
