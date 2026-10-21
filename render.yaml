@@ -89,7 +89,7 @@ services:
       - key: OBJECT_STORAGE_BUCKET
         sync: false
       - key: OBJECT_STORAGE_REGION
-        value: auto
+        value: us-east-005
       - key: OBJECT_STORAGE_ACCESS_KEY_ID
         sync: false
       - key: OBJECT_STORAGE_SECRET_ACCESS_KEY
