@@ -24,7 +24,8 @@ const {
     forgotPassword,
     verifyResetOtp,
     newPassword,
-    CreateLecturer
+    CreateLecturer,
+    Logout
 } = require("./AuthController");
 
 // Broad IP protection: the capacity accommodates legitimate
@@ -77,6 +78,7 @@ AuthRoute.post(
 
 // Protected current-user endpoint.
 AuthRoute.get("/me", authenticate, Me);
+AuthRoute.post("/logout", authenticate, Logout);
 
 // Only administrators can create lecturer accounts.
 AuthRoute.post(

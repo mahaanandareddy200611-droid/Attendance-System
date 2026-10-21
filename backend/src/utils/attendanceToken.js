@@ -7,10 +7,18 @@ const QR_REFRESH_MS =
         process.env.QR_REFRESH_MS
     ) || 3000;
 
+const configuredSkewSlots = process.env.QR_ALLOWED_SKEW_SLOTS;
+const parsedSkewSlots =
+    configuredSkewSlots === undefined || String(configuredSkewSlots).trim() === ""
+        ? NaN
+        : Number(configuredSkewSlots);
+
+// Zero is a valid policy: accepting no previous-slot QR challenges.
+// Do not use "|| 1" here because that silently turns a configured zero into one.
 const QR_ALLOWED_SKEW_SLOTS =
-    Number(
-        process.env.QR_ALLOWED_SKEW_SLOTS
-    ) || 1;
+    Number.isSafeInteger(parsedSkewSlots) && parsedSkewSlots >= 0
+        ? parsedSkewSlots
+        : 1;
 
 
 const getSecret = () => {
@@ -165,9 +173,8 @@ function verifyAttendanceToken(
         !payload ||
         typeof payload.sid !== "string" ||
         typeof payload.nonce !== "string" ||
-        !Number.isSafeInteger(
-            Number(payload.slot)
-        )
+        typeof payload.slot !== "number" ||
+        !Number.isSafeInteger(payload.slot)
     ) {
 
         return {
@@ -229,19 +236,34 @@ function verifyAttendanceToken(
 
 
 function isSlotFresh(
-    slot
+    slot,
+    time = Date.now()
 ) {
+    // Tokens are issued by this server, so clock-skew handling must never
+    // authorize a slot from the future. Require the canonical numeric slot
+    // type as well as an integer to reject coerced values and fractional slots.
+    if (!Number.isSafeInteger(slot)) {
+        return false;
+    }
 
-    const currentSlot =
-        getCurrentSlot();
-
+    const currentSlot = getCurrentSlot(time);
+    const slotsBehind = currentSlot - slot;
 
     return (
-        Math.abs(
-            currentSlot -
-            Number(slot)
-        ) <=
-        QR_ALLOWED_SKEW_SLOTS
+        slotsBehind >= 0 &&
+        slotsBehind <= QR_ALLOWED_SKEW_SLOTS
+    );
+}
+
+function getSlotExpiry(slot) {
+    if (!Number.isSafeInteger(slot)) {
+        throw new TypeError("slot must be a safe integer");
+    }
+
+    // Slots are server-clock intervals. The slot remains fresh through the
+    // configured previous-slot grace; it expires at the next slot boundary.
+    return new Date(
+        (slot + QR_ALLOWED_SKEW_SLOTS + 1) * QR_REFRESH_MS
     );
 }
 
@@ -250,5 +272,6 @@ module.exports = {
     generateAttendanceToken,
     verifyAttendanceToken,
     isSlotFresh,
-    getCurrentSlot
+    getCurrentSlot,
+    getSlotExpiry
 };

@@ -61,15 +61,35 @@ function createAttendanceEvidenceService({
     clock = () => new Date()
 } = {}) {
     async function markDeleted(evidenceId, reason) {
-        return evidenceModel.updateOne(
+        const deletedAt = clock();
+        const finalized = await evidenceModel.updateOne(
             { _id: evidenceId, status: "DELETE_PENDING" },
             {
                 $set: {
                     status: "DELETED",
-                    deletedAt: clock(),
+                    deletedAt,
                     deletionReason: reason
                 }
             }
+        );
+
+        if (finalized.matchedCount === 1 && finalized.modifiedCount === 1) {
+            return true;
+        }
+
+        // A concurrent cleanup may have finalized first. Count that as success
+        // only when the database confirms DELETED; otherwise retain a retryable
+        // failure instead of claiming permanent deletion.
+        const current = await evidenceModel.findOne({ _id: evidenceId })
+            .select("status deletedAt")
+            .lean();
+        if (current?.status === "DELETED") {
+            return true;
+        }
+
+        throw new AppError(
+            "Evidence object was removed but deletion metadata could not be finalized; cleanup remains pending",
+            503
         );
     }
 

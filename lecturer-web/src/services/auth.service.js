@@ -7,3 +7,5 @@ export const CreateLecturer = (data) => api.post("/auth/lecturers", data);
 export const ForgotPassword = (data) => api.post("/auth/forget-password", data);
 export const VerifyOtp = (data) => api.post("/auth/verify-reset-otp", data);
 export const SetPassword = (data) => api.post("/auth/reset-password", data);
+
+export const Logout = () => api.post("/auth/logout");
