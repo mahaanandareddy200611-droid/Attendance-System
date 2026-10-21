@@ -28,6 +28,13 @@ Configure the following in Render's Environment UI. Required staging feature gat
 Do not put server credentials in Vite or Expo public environment variables.
 
 ## 3. After a manual staging deployment
+
+On Windows, after the services and secrets are configured, the real external checks can be run as one interactive pass from the repo:
+
+`powershell -ExecutionPolicy Bypass -File .\backend\scripts\run-release-acceptance.ps1`
+
+The runner prompts for any missing values without printing secret inputs, requires an explicit confirmation phrase before making requests, and executes deployment readiness, version-aware B2 deletion, real email delivery, biometric collection setup, live provider face/liveness/matching plus temporary enrollment deletion, and the real OTP/reset flow. It deletes prompted secrets from the current process environment at the end. The reset smoke intentionally changes the dedicated test account's password and uses two different captures of the same consenting test person; never use student images.
+
 1. GitHub Actions → **Staging Smoke Test**: enter the deployed API base URL (origin or URL ending in `/api/v1`). It verifies `/api/v1/livez`, `/api/v1/health` and `/api/v1/readyz`, including MongoDB/Redis and required feature configuration.
 2. GitHub Actions → **Private Storage Smoke Test**: first add repository Actions secrets `OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY` and (if needed) a repository variable `OBJECT_STORAGE_REGION`. The workflow writes a random test object under `smoke-tests/`, confirms unsigned access is denied, checks signed-download bytes, permanently purges every file version and delete marker, and verifies the object is unreadable. Ensure `OBJECT_STORAGE_PURGE_VERSIONS=true` is enabled for the live smoke.
 3. GitHub Actions → **Staging Email Smoke Test**: configure Actions secrets `MAIL_USER`, `MAIL_PASSWORD`, and optional `MAIL_HOST`, `MAIL_PORT`, `MAIL_SECURE`, then provide a test inbox. It sends one non-sensitive email. Run `password-recovery:smoke` against staging to verify the real delivered OTP and reset/token invalidation. The OTP's expiry and attempt limits also have automated tests.
