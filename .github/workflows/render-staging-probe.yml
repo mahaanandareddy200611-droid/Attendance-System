@@ -50,7 +50,29 @@ jobs:
           head -c 1000 /tmp/web-body 2>/dev/null
           echo
           echo "lecturer_curl_exit=$web_curl"
-          if [ "$backend_curl" -ne 0 ] || [ "$web_curl" -ne 0 ]; then exit 1; fi
+          echo "=== Lecturer bundle API origin ==="
+          bundle_path="$(grep -oE '<script[^>]+src="[^"]+\\.js"' /tmp/web-body 2>/dev/null | head -n 1 | sed -E 's/.*src="([^"]+)".*/\\1/')"
+          if [ -z "$bundle_path" ]; then
+            echo "No production JavaScript bundle URL found in lecturer HTML"
+            web_bundle_curl=1
+          else
+            case "$bundle_path" in
+              http://*|https://*) bundle_url="$bundle_path" ;;
+              /*) bundle_url="https://attendance-lecturer-staging.onrender.com$bundle_path" ;;
+              *) bundle_url="https://attendance-lecturer-staging.onrender.com/$bundle_path" ;;
+            esac
+            echo "Bundle path: $bundle_path"
+            curl -sS --connect-timeout 8 --max-time 20 -o /tmp/lecturer-bundle.js -w 'bundle_http=%{http_code} time=%{time_total}\\n' "$bundle_url"
+            web_bundle_curl=$?
+            if [ "$web_bundle_curl" -eq 0 ] && grep -Fq 'https://attendance-backend-staging.onrender.com/api/v1' /tmp/lecturer-bundle.js; then
+              echo "PASS: lecturer bundle contains the configured deployed API base URL"
+            else
+              echo "FAIL: lecturer bundle is unreachable or does not contain the expected API base URL"
+              grep -oE 'https?://[^" ]+/api/v1' /tmp/lecturer-bundle.js 2>/dev/null | sort -u | head -n 10
+              web_bundle_curl=1
+            fi
+          fi
+          if [ "$backend_curl" -ne 0 ] || [ "$web_curl" -ne 0 ] || [ "$web_bundle_curl" -ne 0 ]; then exit 1; fi
       - name: Probe live Render backend, lecturer bundle, and CORS
         working-directory: backend
         run: npm run smoke:deployment
