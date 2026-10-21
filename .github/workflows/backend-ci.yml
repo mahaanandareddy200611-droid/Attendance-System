@@ -5,7 +5,6 @@ on:
     paths:
       - "backend/**"
       - "biometric-provider/**"
-      - "biometric-provider/**"
       - ".github/workflows/backend-ci.yml"
       - "render.yaml"
       - "backend/render.yaml"
@@ -70,12 +69,6 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379/15
           TEST_REDIS_URL: redis://127.0.0.1:6379/15
           CORS_ORIGINS: http://localhost:5173
-
-      - name: Validate biometric provider entrypoint
-        run: sh -n biometric-provider/entrypoint.sh
-
-      - name: Build the liveness-capable biometric provider image
-        run: docker build --pull --tag attendance-biometric-provider:ci --file biometric-provider/Dockerfile biometric-provider
 
       - name: Build the production Docker image used by Render
         run: docker build --pull --tag attendance-backend:ci --file backend/Dockerfile backend
