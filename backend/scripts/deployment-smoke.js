@@ -33,9 +33,9 @@ function buildLecturerSiteUrl(value) {
   return url.origin;
 }
 
-async function fetchWithTimeout(fetchImpl, url, options = {}, label) {
+async function fetchWithTimeout(fetchImpl, url, options = {}, label, timeoutMs = 60000) {
   try {
-    return await fetchImpl(url, { ...options, signal: AbortSignal.timeout(8000) });
+    return await fetchImpl(url, { ...options, signal: AbortSignal.timeout(Math.max(1000, Math.min(Number(timeoutMs) || 60000, 60000))) });
   } catch {
     throw new Error(label + " could not be reached");
   }
@@ -47,7 +47,7 @@ async function verifyLecturerSite({ lecturerWebBaseUrl, fetchImpl }) {
     fetchImpl,
     origin + "/",
     { headers: { accept: "text/html" } },
-    "Lecturer web site",
+    "Lecturer web site", 60000,
   );
   if (!indexResponse.ok) {
     throw new Error("Lecturer web site returned HTTP " + indexResponse.status);
@@ -75,7 +75,7 @@ async function verifyLecturerSite({ lecturerWebBaseUrl, fetchImpl }) {
     fetchImpl,
     bundleUrl.href,
     { headers: { accept: "application/javascript, text/javascript, */*" } },
-    "Lecturer web JavaScript bundle",
+    "Lecturer web JavaScript bundle", 60000,
   );
   if (!bundleResponse.ok) {
     throw new Error("Lecturer web JavaScript bundle returned HTTP " + bundleResponse.status);
@@ -103,7 +103,7 @@ async function verifyCors({ baseUrl, lecturerOrigin, fetchImpl }) {
         "Access-Control-Request-Headers": "authorization,content-type",
       },
     },
-    "Backend CORS preflight",
+    "Backend CORS preflight", 60000,
   );
   const allowedOrigin = response.headers?.get("access-control-allow-origin");
   const allowedMethods = String(response.headers?.get("access-control-allow-methods") || "")
@@ -130,7 +130,7 @@ async function runDeploymentSmoke({
       fetchImpl,
       buildEndpointUrl(baseUrl, name),
       { headers: { accept: "application/json" } },
-      "/api/v1/" + name,
+      "/api/v1/" + name, 60000,
     );
     let body;
     try {
