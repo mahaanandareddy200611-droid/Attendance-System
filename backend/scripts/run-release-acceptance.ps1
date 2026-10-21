@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 $script:releaseSmokePromptedSecrets = @()
+$script:releaseSmokeFailures = @()
 
 function Get-ConfiguredValue {
     param(
@@ -41,7 +42,14 @@ function Invoke-NpmSmoke {
     param([Parameter(Mandatory=$true)][string]$Name)
     Write-Host "`n=== $Name ==="
     & npm run $Name
-    if ($LASTEXITCODE -ne 0) { throw "Smoke command '$Name' failed with exit code $LASTEXITCODE." }
+    $exitCode = $LASTEXITCODE
+    if ($exitCode -ne 0) {
+        Write-Warning "FAIL: '$Name' exited with code $exitCode. Continuing so the remaining independent checks still run."
+        $script:releaseSmokeFailures += [pscustomobject]@{ Name = $Name; ExitCode = $exitCode }
+        return $false
+    }
+    Write-Host "PASS: $Name"
+    return $true
 }
 
 Write-Host 'This runner performs real external actions:'
@@ -114,7 +122,16 @@ try {
     Invoke-NpmSmoke 'biometric:smoke'
     Invoke-NpmSmoke 'password-recovery:smoke'
 
-    Write-Host "`nALL CONFIGURED STAGING SMOKES PASSED."
+    if ($script:releaseSmokeFailures.Count -gt 0) {
+        Write-Host "`n=== STAGING ACCEPTANCE SUMMARY: FAILURES DETECTED ===" -ForegroundColor Yellow
+        foreach ($failure in $script:releaseSmokeFailures) {
+            Write-Host ("FAIL: {0} (exit {1})" -f $failure.Name, $failure.ExitCode)
+        }
+        Write-Host ("Completed {0} checks; {1} failed." -f 6, $script:releaseSmokeFailures.Count)
+        throw 'One or more external staging checks failed. Review the results above; all independent checks were attempted.'
+    }
+
+    Write-Host "`nALL CONFIGURED STAGING SMOKES PASSED." -ForegroundColor Green
     Write-Host 'Save the newly selected test-account password securely. No live student biometrics were required.'
 } finally {
     Pop-Location
