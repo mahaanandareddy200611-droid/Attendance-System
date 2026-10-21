@@ -47,17 +47,19 @@ function readXmlTag(xml, tagName) {
 
 function parseObjectVersions(xml) {
   const objects = [];
-  for (const tagName of ["Version", "DeleteMarker"]) {
-    const pattern = new RegExp("<" + tagName + "(?:\\s[^>]*)?>([\\s\\S]*?)</" + tagName + ">", "g");
-    let match;
-    while ((match = pattern.exec(xml)) !== null) {
-      const key = readXmlTag(match[1], "Key");
-      const versionId = readXmlTag(match[1], "VersionId");
-      if (key === null || versionId === null || versionId === "") {
-        throw new AppError("Private object storage returned invalid version metadata", 503);
-      }
-      objects.push({ key, versionId, kind: tagName });
+  // S3 ListObjectVersions interleaves Version and DeleteMarker elements in
+  // provider order. Scan both tag types with one expression so we preserve
+  // that order rather than grouping every Version before every DeleteMarker.
+  const pattern = /<(Version|DeleteMarker)(?:\\s[^>]*)?>([\\s\\S]*?)<\\/\\1>/g;
+  let match;
+  while ((match = pattern.exec(xml)) !== null) {
+    const kind = match[1];
+    const key = readXmlTag(match[2], "Key");
+    const versionId = readXmlTag(match[2], "VersionId");
+    if (key === null || versionId === null || versionId === "") {
+      throw new AppError("Private object storage returned invalid version metadata", 503);
     }
+    objects.push({ key, versionId, kind });
   }
   return objects;
 }
