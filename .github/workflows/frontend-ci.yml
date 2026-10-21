@@ -46,6 +46,8 @@ jobs:
       - name: Build production web client
         working-directory: lecturer-web
         run: npm run build
+        env:
+          VITE_API_BASE_URL: https://attendance-backend-staging.onrender.com/api/v1
       - name: Lint web client
         working-directory: lecturer-web
         run: npm run lint
