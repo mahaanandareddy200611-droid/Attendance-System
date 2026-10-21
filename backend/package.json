@@ -11,7 +11,8 @@
     "storage:smoke": "node scripts/private-storage-smoke.js",
     "smoke:deployment": "node scripts/deployment-smoke.js",
     "mail:smoke": "node scripts/mail-smoke.js",
-    "biometric:smoke": "node scripts/biometric-provider-smoke.js"
+    "biometric:smoke": "node scripts/biometric-provider-smoke.js",
+    "password-recovery:smoke": "node scripts/password-recovery-smoke.js"
   },
   "keywords": [],
   "author": "",
