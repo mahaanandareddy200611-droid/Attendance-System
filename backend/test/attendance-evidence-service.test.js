@@ -22,13 +22,18 @@ function query(getValue) {
   };
 }
 
-function fixture({ now = new Date("2026-10-20T12:00:00.000Z"), status = "ACTIVE" } = {}) {
+function fixture({
+  now = new Date("2026-10-20T12:00:00.000Z"),
+  status = "ACTIVE",
+  failDeleteFinalization = false,
+} = {}) {
   const state = {
     doc: null,
     uploads: 0,
     deletes: 0,
     urlRequests: 0,
     databaseQueries: 0,
+    failDeleteFinalization,
   };
   const clock = () => new Date(now);
   const evidenceModel = {
@@ -52,7 +57,10 @@ function fixture({ now = new Date("2026-10-20T12:00:00.000Z"), status = "ACTIVE"
       if (!state.doc || String(state.doc._id) !== String(filter._id)) return Promise.resolve({ modifiedCount: 0 });
       if (typeof filter.status === "string" && state.doc.status !== filter.status) return Promise.resolve({ modifiedCount: 0 });
       if (filter.status && typeof filter.status === "object" && filter.status.$in && !filter.status.$in.includes(state.doc.status)) {
-        return Promise.resolve({ modifiedCount: 0 });
+        return Promise.resolve({ modifiedCount: 0, matchedCount: 0 });
+      }
+      if (state.failDeleteFinalization && update.$set?.status === "DELETED") {
+        return Promise.resolve({ modifiedCount: 0, matchedCount: 0 });
       }
       Object.assign(state.doc, update.$set);
       return Promise.resolve({ modifiedCount: 1, matchedCount: 1 });
@@ -61,7 +69,8 @@ function fixture({ now = new Date("2026-10-20T12:00:00.000Z"), status = "ACTIVE"
       state.databaseQueries += 1;
       const matches = () => {
         const doc = state.doc;
-        if (!doc || String(doc._id) !== String(filter._id) || String(doc.studentId) !== String(filter.studentId)) return null;
+        if (!doc || String(doc._id) !== String(filter._id)) return null;
+        if (filter.studentId !== undefined && String(doc.studentId) !== String(filter.studentId)) return null;
         if (filter.status && doc.status !== filter.status) return null;
         if (filter.expiresAt?.$gt && new Date(doc.expiresAt) <= filter.expiresAt.$gt) return null;
         return doc;
@@ -208,4 +217,24 @@ test("expired-evidence cleanup records successful remote deletion", async () => 
   assert.equal(state.doc.status, "DELETED");
   assert.equal(state.doc.deletionReason, "RETENTION_EXPIRED");
   assert.equal(state.deletes, 1);
+});
+
+
+test("evidence deletion does not report DELETED unless metadata confirms terminal state", async () => {
+  const { service, state } = fixture({ failDeleteFinalization: true });
+  state.doc = {
+    _id: EVIDENCE_ID,
+    studentId: STUDENT_ID,
+    objectKey: "attendance-evidence/2026/10/example.jpg",
+    status: "ACTIVE",
+    expiresAt: new Date("2026-10-27T12:00:00.000Z"),
+    save: async function save() {},
+  };
+
+  await assert.rejects(
+    service.deleteEvidence({ studentId: STUDENT_ID, evidenceId: EVIDENCE_ID }),
+    (error) => error.statusCode === 503 && /queued for retry/i.test(error.message),
+  );
+  assert.equal(state.doc.status, "DELETE_PENDING");
+  assert.equal(state.deletes, 1, "remote deletion succeeded, but metadata remains retryable");
 });
