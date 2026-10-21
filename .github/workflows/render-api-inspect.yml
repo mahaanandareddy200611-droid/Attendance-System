@@ -18,7 +18,7 @@ jobs:
       - name: Inspect Render API configuration and recent backend deploys without exposing secrets
         shell: bash
         env:
-          RENDER_API_KEY: \${{ secrets.RENDER_API_KEY }}
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
           RENDER_SERVICE_ID: srv-dbbf28dg1s2s738o6290
         run: |
           set -euo pipefail
