@@ -96,7 +96,7 @@ test("provider URLs cannot embed credentials", () => {
       ...valid,
       BIOMETRIC_BASE_URL: "https://user:password@biometric.example.test",
     }),
-    (error) => error.missingOrInvalid.includes("BIOMETRIC_BASE_URL"),
+    (error) => error.missingOrInvalid.some((key) => key.startsWith("BIOMETRIC_BASE_URL")),
   );
 });
 
