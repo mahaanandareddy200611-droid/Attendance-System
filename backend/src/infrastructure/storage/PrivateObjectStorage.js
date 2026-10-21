@@ -315,4 +315,4 @@ exports.createDownloadUrl = async ({ key, expiresInSeconds }) => {
   return url.origin + url.pathname + "?" + canonicalQuery + "&X-Amz-Signature=" + signature;
 };
 
-exports._test = { awsEncode, canonicalKey, canonicalizeQuery, decodeXmlText, parseObjectVersions, purgeObjectVersions, getConfiguration, formatAmzDate, sha256 };
+exports._test = { awsEncode, canonicalKey, canonicalizeQuery, decodeXmlText, parseObjectVersions, listObjectVersions, purgeObjectVersions, getConfiguration, formatAmzDate, sha256 };
