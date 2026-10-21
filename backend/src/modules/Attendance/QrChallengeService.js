@@ -6,7 +6,8 @@ const {
 } = require("../../config/redis");
 
 const {
-    getCurrentSlot
+    getCurrentSlot,
+    getSlotExpiry
 } = require("../../utils/attendanceToken");
 
 
@@ -149,13 +150,7 @@ exports.getCurrentChallenge =
             nonce,
 
             expiresAt:
-                new Date(
-                    Date.now() +
-                    Math.max(
-                        0,
-                        QR_REFRESH_MS
-                    )
-                )
+                getSlotExpiry(slot)
         };
     };
 
