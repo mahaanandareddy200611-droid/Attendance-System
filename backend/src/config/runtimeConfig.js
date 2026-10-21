@@ -13,6 +13,26 @@ function isUrl(value, protocols, { allowCredentials = false } = {}) {
     }
 }
 
+// A deployed production process cannot reach loopback or Docker-host aliases
+// as a separate biometric service. Reject these addresses at startup rather
+// than allowing an unusable provider URL to look production-valid.
+function isLocalOnlyHost(value) {
+    try {
+        const hostname = new URL(String(value || ""))
+            .hostname.toLowerCase().replace(/^\[|\]$/g, "");
+
+        return hostname === "localhost" ||
+            hostname.endsWith(".localhost") ||
+            hostname === "::1" ||
+            hostname === "0.0.0.0" ||
+            hostname === "host.docker.internal" ||
+            hostname === "host.containers.internal" ||
+            /^127(?:\.\d{1,3}){3}$/.test(hostname);
+    } catch {
+        return false;
+    }
+}
+
 function validateRuntimeConfig(env = process.env) {
     const invalid = [];
     const jwtSecret = String(env.JWT_SECRET || "");
@@ -38,7 +58,14 @@ function validateRuntimeConfig(env = process.env) {
     }
 
     if (isTrue(env.ATTENDANCE_REQUIRE_BIOMETRIC)) {
-        if (!isUrl(env.BIOMETRIC_BASE_URL, env.NODE_ENV === "production" ? ["https:"] : ["http:", "https:"])) invalid.push("BIOMETRIC_BASE_URL (HTTPS required in production)");
+        const production = env.NODE_ENV === "production";
+        const providerUrlIsValid = isUrl(
+            env.BIOMETRIC_BASE_URL,
+            production ? ["https:"] : ["http:", "https:"]
+        );
+        if (!providerUrlIsValid || (production && isLocalOnlyHost(env.BIOMETRIC_BASE_URL))) {
+            invalid.push("BIOMETRIC_BASE_URL (production requires a reachable HTTPS provider, not a loopback/local-only address)");
+        }
         if (!String(env.BIOMETRIC_API_KEY || "").trim()) invalid.push("BIOMETRIC_API_KEY");
     }
 
