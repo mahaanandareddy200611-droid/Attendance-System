@@ -17,6 +17,7 @@ Configure the following in Render's Environment UI. Required staging feature gat
 - `CORS_ORIGINS`: exact lecturer web HTTPS origin(s), comma-separated.
 - `BIOMETRIC_BASE_URL`, `BIOMETRIC_API_KEY`, `BIOMETRIC_COLLECTION_ID`, model/threshold settings for a compatible deployed provider.
 - `OBJECT_STORAGE_ENDPOINT`, `OBJECT_STORAGE_BUCKET`, `OBJECT_STORAGE_REGION`, `OBJECT_STORAGE_ACCESS_KEY_ID`, `OBJECT_STORAGE_SECRET_ACCESS_KEY`: private S3-compatible bucket credentials with least privilege.
+- For Backblaze B2, `OBJECT_STORAGE_PURGE_VERSIONS=true` permanently removes prior object versions and delete markers; the scoped key must allow listing and deleting file versions. Verify with the provider smoke test before accepting evidence deletion.
 - `MAIL_USER`, `MAIL_PASSWORD`; optionally `MAIL_HOST`, `MAIL_PORT`, `MAIL_SECURE` for SMTP. Without `MAIL_HOST`, the legacy Gmail transport is used.
 - Set lecturer web `VITE_API_BASE_URL` and student app `EXPO_PUBLIC_API_BASE_URL` to the deployed HTTPS API base ending in `/api/v1`.
 - Keep `TRUST_PROXY_HOPS=1` for Render and `BIOMETRIC_PRODUCTION_APPROVED=false` in staging. Production approval requires a supervised and reviewed pilot.
