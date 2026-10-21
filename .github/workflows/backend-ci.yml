@@ -76,5 +76,19 @@ jobs:
       - name: Validate biometric provider startup shell
         run: sh -n biometric-provider/entrypoint.sh
 
+      - name: Verify biometric startup refuses missing licence acceptance
+        shell: bash
+        run: |
+          set +e
+          output="$(BIOMETRIC_MODEL_LICENSE_ACCEPTED=false INSIGHTFACE_API_KEY=ci-not-a-real-key sh biometric-provider/entrypoint.sh 2>&1)"
+          status=$?
+          set -e
+          test "$status" -eq 78
+          printf '%s\n' "$output" | grep -F "Refusing to install face models"
+          output="$(BIOMETRIC_MODEL_LICENSE_ACCEPTED=true INSIGHTFACE_API_KEY= sh biometric-provider/entrypoint.sh 2>&1)"
+          status=$?
+          test "$status" -eq 78
+          printf '%s\n' "$output" | grep -F "INSIGHTFACE_API_KEY must be configured"
+
       - name: Build the licensed-gated biometric provider image
         run: docker build --pull --tag attendance-biometric:ci --file biometric-provider/Dockerfile biometric-provider

@@ -56,3 +56,31 @@ test("environment example documents the feature gates and current provider varia
     assert.match(example, new RegExp(`^${key}=.*$`, "m"));
   }
 });
+
+
+test("Render Blueprint wires the lecturer site to the backend origin with matching CORS", () => {
+  const blueprint = fs.readFileSync(path.join(root, "render.yaml"), "utf8");
+  assert.match(blueprint, /name:\s*attendance-backend-staging/);
+  assert.match(blueprint, /name:\s*attendance-lecturer-staging/);
+  assert.match(blueprint, /runtime:\s*static/);
+  assert.match(blueprint, /autoDeployTrigger:\s*off/);
+  assert.match(blueprint, /VITE_API_BASE_URL[\s\S]{0,120}https:\/\/attendance-backend-staging\.onrender\.com\/api\/v1/);
+  assert.match(blueprint, /CORS_ORIGINS\s*\n\s*value:\s*https:\/\/attendance-lecturer-staging\.onrender\.com/);
+  assert.match(blueprint, /source:\s*\/\*/);
+  assert.match(blueprint, /destination:\s*\/index\.html/);
+});
+
+test("biometric Render blueprint keeps licensing explicit, data persistent, and model API private", () => {
+  const blueprint = fs.readFileSync(path.join(root, "..", "biometric-provider", "render.yaml"), "utf8");
+  const entrypoint = fs.readFileSync(path.join(root, "..", "biometric-provider", "entrypoint.sh"), "utf8");
+  const config = fs.readFileSync(path.join(root, "..", "biometric-provider", "server.toml"), "utf8");
+  assert.match(blueprint, /plan:\s*1c-2g/);
+  assert.match(blueprint, /mountPath:\s*\/data/);
+  assert.match(blueprint, /sizeGB:\s*5/);
+  assert.match(blueprint, /INSIGHTFACE_API_KEY[\s\S]{0,30}sync:\s*false/);
+  assert.match(blueprint, /BIOMETRIC_MODEL_LICENSE_ACCEPTED[\s\S]{0,30}sync:\s*false/);
+  assert.match(entrypoint, /BIOMETRIC_MODEL_LICENSE_ACCEPTED:-false/);
+  assert.match(entrypoint, /INSIGHTFACE_API_KEY/);
+  assert.match(config, /liveness_on_registration\s*=\s*true/);
+  assert.match(config, /\[web\]\s*\ndisabled\s*=\s*true/);
+});
