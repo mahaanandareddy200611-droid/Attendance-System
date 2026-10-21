@@ -1,0 +1,69 @@
+name: Read-Only Render Deployment Diagnostic
+
+on:
+  push:
+    branches:
+      - ops/render-api-inspect
+    paths:
+      - ".github/workflows/render-api-inspect.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  inspect:
+    runs-on: ubuntu-latest
+    timeout-minutes: 3
+    steps:
+      - name: Inspect Render API configuration and recent backend deploys without exposing secrets
+        shell: bash
+        env:
+          RENDER_API_KEY: \${{ secrets.RENDER_API_KEY }}
+          RENDER_SERVICE_ID: srv-dbbf28dg1s2s738o6290
+        run: |
+          set -euo pipefail
+          if [ -z "$RENDER_API_KEY" ]; then
+            echo "BLOCKED: GitHub Actions secret RENDER_API_KEY is not configured; Render API inspection and deployment cannot be performed from this runner."
+            exit 2
+          fi
+          curl --silent --show-error --fail \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header "Accept: application/json" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID" \
+            --output /tmp/render-service.json
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const raw = JSON.parse(fs.readFileSync("/tmp/render-service.json", "utf8"));
+          const s = raw.service || raw;
+          const safe = {};
+          for (const key of ["id","name","type","runtime","plan","region","suspended","autoDeployTrigger","branch","repo","rootDir","createdAt","updatedAt","dashboardUrl","serviceDetails"]) {
+            if (s[key] !== undefined) safe[key] = s[key];
+          }
+          console.log("RENDER_SERVICE_METADATA");
+          console.log(JSON.stringify(safe, null, 2));
+          NODE
+          curl --silent --show-error --fail \
+            --header "Authorization: Bearer $RENDER_API_KEY" \
+            --header "Accept: application/json" \
+            "https://api.render.com/v1/services/$RENDER_SERVICE_ID/deploys?limit=5" \
+            --output /tmp/render-deploys.json
+          node - <<'NODE'
+          const fs = require("node:fs");
+          const raw = JSON.parse(fs.readFileSync("/tmp/render-deploys.json", "utf8"));
+          const rows = Array.isArray(raw) ? raw : raw.deploys || [];
+          const safe = rows.slice(0,5).map((entry) => {
+            const d = entry.deploy || entry;
+            return {
+              id: d.id || d.deployId,
+              status: d.status,
+              trigger: d.trigger,
+              createdAt: d.createdAt,
+              startedAt: d.startedAt,
+              finishedAt: d.finishedAt,
+              commitId: d.commit?.id,
+              commitMessage: d.commit?.message,
+            };
+          });
+          console.log("RENDER_RECENT_DEPLOYS");
+          console.log(JSON.stringify(safe, null, 2));
+          NODE
