@@ -66,6 +66,12 @@ jobs:
       - name: Install dependencies
         working-directory: student-app
         run: npm ci
+      - name: Lint student app
+        working-directory: student-app
+        run: npm run lint
+      - name: Type-check student app
+        working-directory: student-app
+        run: npm run typecheck
       - name: Export Expo web bundle
         working-directory: student-app
         run: npx expo export --platform web
