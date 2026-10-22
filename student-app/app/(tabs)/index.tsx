@@ -368,6 +368,9 @@ export default function CheckInScreen() {
         challenge: activeChallenge.challenge,
         frames: newUris,
       });
+      // Remove the camera images from the local cache after the provider has
+      // finished verifying them. The server stores only the resulting assertion.
+      await deleteTemporaryPhotos(newUris);
       setAssertionId(nextAssertion);
       setActiveChallenge(null);
       setFrameUris([]);
@@ -471,6 +474,8 @@ export default function CheckInScreen() {
   };
 
   const selectSession = (nextSessionId: string) => {
+    // A session switch abandons any partially captured liveness frames.
+    void deleteTemporaryPhotos(frameUris);
     setSessionId(nextSessionId);
     setAssertionId("");
     setActiveChallenge(null);
