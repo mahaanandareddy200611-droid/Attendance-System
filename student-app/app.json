@@ -26,6 +26,20 @@
       "favicon": "./assets/images/favicon.png"
     },
     "plugins": [
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Attendance System to verify your location when marking class attendance."
+        }
+      ],
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Attendance System to use your camera for face enrollment, liveness checks, and attendance QR scanning.",
+          "microphonePermission": "Attendance System does not record audio.",
+          "recordAudioAndroid": false
+        }
+      ],
       "expo-router",
       [
         "expo-splash-screen",

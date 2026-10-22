@@ -87,10 +87,20 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const logout = useCallback(async () => {
-    await SecureStore.deleteItemAsync(TOKEN_KEY);
-    setToken(null);
-    setUser(null);
-  }, []);
+    const currentToken = token;
+    try {
+      if (currentToken) {
+        // Revoke the token server-side; still allow local logout when offline.
+        await apiRequest("/auth/logout", { method: "POST", token: currentToken });
+      }
+    } catch {
+      // The local session must end even if the backend cannot be reached.
+    } finally {
+      await SecureStore.deleteItemAsync(TOKEN_KEY).catch(() => {});
+      setToken(null);
+      setUser(null);
+    }
+  }, [token]);
 
   const value = useMemo(
     () => ({ user, token, loading, login, logout, refreshUser }),

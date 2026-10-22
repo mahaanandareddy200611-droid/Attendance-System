@@ -64,7 +64,7 @@ test("Render Blueprint wires the lecturer site to the backend origin with matchi
   assert.match(blueprint, /name:\s*attendance-lecturer-staging/);
   assert.match(blueprint, /runtime:\s*static/);
   assert.match(blueprint, /autoDeployTrigger:\s*off/);
-  assert.match(blueprint, /VITE_API_BASE_URL[\s\S]{0,120}https:\/\/attendance-backend-staging\.onrender\.com\/api\/v1/);
+  assert.match(blueprint, /VITE_API_BASE_URL[\s\S]{0,120}https:\/\/attendance-backend-staging-n04q\.onrender\.com\/api\/v1/);
   assert.match(blueprint, /CORS_ORIGINS\s*\n\s*value:\s*https:\/\/attendance-lecturer-staging\.onrender\.com/);
   assert.match(blueprint, /source:\s*\/\*/);
   assert.match(blueprint, /destination:\s*\/index\.html/);
