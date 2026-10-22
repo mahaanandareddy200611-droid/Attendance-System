@@ -14,6 +14,41 @@ const {
 const provider =
     require("./LocalBiometricProvider");
 
+const safeDiagnosticCode = (value) => {
+    if (value === undefined || value === null) return undefined;
+    const code = String(value);
+    return /^[A-Za-z0-9_.:-]{1,64}$/.test(code) ? code : undefined;
+};
+
+function biometricDeletionFailureDetails(error) {
+    const details = {
+        errorName: safeDiagnosticCode(error?.name) || "Error",
+        failureKind: error instanceof TypeError
+            ? "NETWORK_OR_URL"
+            : Number.isInteger(Number(error?.statusCode))
+                ? "PROVIDER_HTTP"
+                : "PROVIDER_OR_INTERNAL"
+    };
+
+    const httpStatus = Number(error?.statusCode);
+    const providerCode = safeDiagnosticCode(error?.providerCode);
+    const causeName = safeDiagnosticCode(error?.cause?.name);
+    const causeCode = safeDiagnosticCode(error?.cause?.code);
+    const errorCode = safeDiagnosticCode(error?.code);
+
+    if (Number.isInteger(httpStatus) && httpStatus >= 100 && httpStatus <= 599) {
+        details.providerHttpStatus = httpStatus;
+    }
+    if (providerCode) details.providerCode = providerCode;
+    if (causeName) details.causeName = causeName;
+    if (causeCode) details.causeCode = causeCode;
+    if (errorCode) details.code = errorCode;
+
+    // Deliberately do not log provider response bodies, URLs, user IDs,
+    // person identifiers, request headers, images, or credentials.
+    return details;
+}
+
 exports.getMyEnrollment = async ({ userId }) => {
     const enrollment = await BiometricEnrollment.findOne({
         userId,
@@ -984,9 +1019,10 @@ exports.sweepPendingBiometricDeletes = async ({ limit = 10 } = {}) => {
             }
         } catch (error) {
             result.failed += 1;
-            console.error("Pending biometric deletion retry failed", {
-                errorName: error?.name || "Error"
-            });
+            console.error(
+                "Pending biometric deletion retry failed",
+                biometricDeletionFailureDetails(error)
+            );
         }
     }
     return result;

@@ -112,6 +112,21 @@ const request =
     };
 
 
+/**
+ * Verify that the configured provider is reachable and has its model/API
+ * initialized. Never treat non-empty environment variables as proof of health.
+ */
+exports.checkHealth = async () => {
+    try {
+        const health = await request({ path: "/v1/health" });
+        return health?.status === "ready" && health?.auth_enabled === true;
+    } catch {
+        // Readiness must fail closed without exposing provider URLs or secrets.
+        return false;
+    }
+};
+
+
 /*
 --------------------------------------------------
 ENROLL STUDENT
