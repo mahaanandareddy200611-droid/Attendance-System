@@ -34,10 +34,11 @@ function createApi({ rejectOldToken = true } = {}) {
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
     if (url.pathname.endsWith("/auth/verify-reset-otp")) {
-      return new Response(JSON.stringify({ success: true }), { status: 200 });
+      return new Response(JSON.stringify({ success: true, resetToken: "A".repeat(43) }), { status: 200 });
     }
     if (url.pathname.endsWith("/auth/reset-password")) {
       assert.equal(body.password, env.AUTH_RECOVERY_NEW_PASSWORD);
+      assert.match(body.resetToken, /^[A-Za-z0-9_-]{43}$/);
       resetComplete = true;
       return new Response(JSON.stringify({ success: true }), { status: 200 });
     }
@@ -79,6 +80,7 @@ test("password recovery smoke verifies OTP, changes password and checks prior cr
   });
   assert.deepEqual(otpPrompts, ["prompted"]);
   assert.equal(api.calls.some((call) => call.body?.otp === "123456"), true);
+  assert.equal(api.calls.some((call) => call.path.endsWith("/auth/reset-password") && /^[A-Za-z0-9_-]{43}$/.test(call.body?.resetToken || "")), true);
   assert.equal(api.calls.some((call) => call.token === "old-token" && call.path.endsWith("/auth/me")), true);
 });
 

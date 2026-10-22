@@ -68,18 +68,19 @@ exports.forgotPassword = asyncHandler(async (req, res) => {
 exports.verifyResetOtp = asyncHandler(async (req, res) => {
   const { otp, email } = req.body;
 
-  await authservice.verifyResetOTP(otp, email);
+  const result = await authservice.verifyResetOTP(otp, email);
 
   return res.status(200).json({
     success: true,
     message: "OTP verified successfully",
+    resetToken: result.resetToken,
   });
 });
 
 exports.newPassword = asyncHandler(async (req, res) => {
-  const { password, email } = req.body;
+  const { password, email, resetToken } = req.body;
 
-  await authservice.password(password, email);
+  await authservice.password(password, email, resetToken);
 
   return res.status(200).json({
     success: true,
@@ -118,5 +119,15 @@ exports.CreateLecturer = asyncHandler(async (req, res) => {
       role: lecturer.role,
       status: lecturer.status,
     },
+  });
+});
+
+
+exports.Logout = asyncHandler(async (req, res) => {
+  const data = await authservice.Logout(req.user.id);
+  return res.status(200).json({
+    success: true,
+    message: "Logged out. All active sessions for this account have been revoked.",
+    data,
   });
 });

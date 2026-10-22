@@ -12,6 +12,7 @@ export default function ForgotPasswordPage() {
   const [step, setStep] = useState(1);
   const [email, setEmail] = useState("");
   const [otp, setOtp] = useState("");
+  const [resetToken, setResetToken] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
   const [message, setMessage] = useState("");
@@ -49,7 +50,7 @@ export default function ForgotPasswordPage() {
     }
     submit(
       event,
-      () => SetPassword({ email, password }),
+      () => SetPassword({ email, password, resetToken }),
       "Your password has been reset.",
       0,
     );
@@ -118,7 +119,14 @@ export default function ForgotPasswordPage() {
             onSubmit={(event) =>
               submit(
                 event,
-                () => VerifyOtp({ email, otp }),
+                async () => {
+                  const response = await VerifyOtp({ email, otp });
+                  const issuedToken = response?.data?.resetToken;
+                  if (typeof issuedToken !== "string" || !/^[A-Za-z0-9_-]{43}$/.test(issuedToken)) {
+                    throw new Error("The server did not return a valid password-reset authorization.");
+                  }
+                  setResetToken(issuedToken);
+                },
                 "Email verified. Set a new password.",
                 3,
               )

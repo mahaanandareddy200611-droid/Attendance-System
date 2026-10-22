@@ -163,6 +163,57 @@ async function loadOwnedAsset({ assetId, actorId, role }) {
   return asset;
 }
 
+
+async function claimMediaDeletion(asset) {
+  if (asset.status === "DELETED") {
+    return { alreadyDeleted: true, deletedAt: asset.deletedAt || null };
+  }
+  if (asset.status === "DELETE_PENDING") {
+    return { alreadyDeleted: false, alreadyPending: true };
+  }
+  if (!["ACTIVE", "UPLOADING"].includes(asset.status)) {
+    throw new AppError("Media asset cannot be deleted in its current state", 409);
+  }
+
+  const claimed = await MediaAsset.updateOne(
+    { _id: asset._id, status: asset.status },
+    { $set: { status: "DELETE_PENDING", deleteRequestedAt: new Date() } },
+  );
+  if (claimed.matchedCount === 1 && claimed.modifiedCount === 1) {
+    return { alreadyDeleted: false, alreadyPending: false };
+  }
+
+  // Another request may have claimed or completed deletion after our read.
+  const current = await MediaAsset.findById(asset._id).select("status deletedAt").lean();
+  if (current?.status === "DELETED") {
+    return { alreadyDeleted: true, deletedAt: current.deletedAt || null };
+  }
+  if (current?.status === "DELETE_PENDING") {
+    return { alreadyDeleted: false, alreadyPending: true };
+  }
+  throw new AppError("Media asset state changed during deletion; retry the request", 409);
+}
+
+async function finalizeMediaDeletion(assetId, deletedAt) {
+  const finalized = await MediaAsset.updateOne(
+    { _id: assetId, status: "DELETE_PENDING" },
+    { $set: { status: "DELETED", deletedAt } },
+  );
+  if (finalized.matchedCount === 1 && finalized.modifiedCount === 1) {
+    return { alreadyDeleted: false, deletedAt };
+  }
+
+  // Do not report permanent deletion unless MongoDB confirms the terminal state.
+  const current = await MediaAsset.findById(assetId).select("status deletedAt").lean();
+  if (current?.status === "DELETED") {
+    return { alreadyDeleted: true, deletedAt: current.deletedAt || deletedAt };
+  }
+  throw new AppError(
+    "Media object removal could not be finalized in metadata; cleanup remains pending",
+    503,
+  );
+}
+
 exports.createDownloadUrl = async ({ assetId, actorId, role }) => {
   const asset = await loadOwnedAsset({ assetId, actorId, role });
   if (
@@ -182,6 +233,18 @@ exports.createDownloadUrl = async ({ assetId, actorId, role }) => {
     expiresInSeconds,
   });
 
+  // Signing and deletion can race. Recheck persisted state before returning a
+  // URL so a concurrent request cannot receive a fresh link after deletion starts.
+  const stillActive = await MediaAsset.findOne({
+    _id: asset._id,
+    status: "ACTIVE",
+    retentionUntil: { $gt: new Date() },
+  }).select("_id").lean();
+
+  if (!stillActive) {
+    throw new AppError("Media asset is expired or being deleted", 410);
+  }
+
   return {
     id: String(asset._id),
     url,
@@ -194,19 +257,16 @@ exports.createDownloadUrl = async ({ assetId, actorId, role }) => {
 
 exports.deleteMediaAsset = async ({ assetId, actorId, role }) => {
   const asset = await loadOwnedAsset({ assetId, actorId, role });
-  if (asset.status === "DELETED") {
-    return { id: String(asset._id), status: "DELETED", deletedAt: asset.deletedAt || null };
+  const claim = await claimMediaDeletion(asset);
+  if (claim.alreadyDeleted) {
+    return {
+      id: String(asset._id),
+      status: "DELETED",
+      deletedAt: claim.deletedAt,
+    };
   }
 
-  if (asset.status === "ACTIVE") {
-    await MediaAsset.updateOne(
-      { _id: asset._id, status: "ACTIVE" },
-      { $set: { status: "DELETE_PENDING", deleteRequestedAt: new Date() } },
-    );
-  }
-
-  // DELETE is idempotent. A retry completes metadata cleanup if the object
-  // was removed but the previous request lost its database acknowledgement.
+  // A DELETE_PENDING asset is safe to retry; ACTIVE/UPLOADING must be claimed.
   await AuditEvent.create({
     event: "MEDIA_DELETE_REQUESTED",
     userId: actorId,
@@ -214,29 +274,31 @@ exports.deleteMediaAsset = async ({ assetId, actorId, role }) => {
     metadata: { assetId: String(asset._id), reason: "OWNER_REQUEST" },
   });
 
+  // If storage or database finalization fails, leave DELETE_PENDING for retry.
   await storage.deleteObject({ key: asset.objectKey });
+  const finalized = await finalizeMediaDeletion(asset._id, new Date());
 
-  const deletedAt = new Date();
-  await MediaAsset.updateOne(
-    { _id: asset._id, status: "DELETE_PENDING" },
-    { $set: { status: "DELETED", deletedAt } },
-  );
-
-  try {
-    await AuditEvent.create({
-      event: "MEDIA_DELETED",
-      userId: actorId,
-      sessionId: asset.sessionId,
-      metadata: { assetId: String(asset._id), deletedAt },
-    });
-  } catch (error) {
-    console.error("Media deletion audit event failed", {
-      assetId: String(asset._id),
-      errorName: error?.name || "Error",
-    });
+  if (!finalized.alreadyDeleted) {
+    try {
+      await AuditEvent.create({
+        event: "MEDIA_DELETED",
+        userId: actorId,
+        sessionId: asset.sessionId,
+        metadata: { assetId: String(asset._id), deletedAt: finalized.deletedAt },
+      });
+    } catch (error) {
+      console.error("Media deletion audit event failed", {
+        assetId: String(asset._id),
+        errorName: error?.name || "Error",
+      });
+    }
   }
 
-  return { id: String(asset._id), status: "DELETED", deletedAt };
+  return {
+    id: String(asset._id),
+    status: "DELETED",
+    deletedAt: finalized.deletedAt,
+  };
 };
 
 exports.sweepExpiredMediaAssets = async ({ limit = 25 } = {}) => {
@@ -271,21 +333,26 @@ exports.sweepExpiredMediaAssets = async ({ limit = 25 } = {}) => {
       }
 
       await storage.deleteObject({ key: asset.objectKey });
-      const deletedAt = new Date();
-      await MediaAsset.updateOne(
-        { _id: asset._id, status: "DELETE_PENDING" },
-        { $set: { status: "DELETED", deletedAt } },
-      );
-      await AuditEvent.create({
-        event: "MEDIA_DELETED",
-        ...(asset.ownerId ? { userId: asset.ownerId } : {}),
-        sessionId: asset.sessionId,
-        metadata: {
-          assetId: String(asset._id),
-          reason: "RETENTION_EXPIRED",
-          deletedAt,
-        },
-      });
+      const finalized = await finalizeMediaDeletion(asset._id, new Date());
+      if (!finalized.alreadyDeleted) {
+        try {
+          await AuditEvent.create({
+            event: "MEDIA_DELETED",
+            ...(asset.ownerId ? { userId: asset.ownerId } : {}),
+            sessionId: asset.sessionId,
+            metadata: {
+              assetId: String(asset._id),
+              reason: "RETENTION_EXPIRED",
+              deletedAt: finalized.deletedAt,
+            },
+          });
+        } catch (auditError) {
+          console.error("Expired media cleanup audit event failed", {
+            assetId: String(asset._id),
+            errorName: auditError?.name || "Error",
+          });
+        }
+      }
       result.deleted += 1;
     } catch (error) {
       result.failed += 1;
