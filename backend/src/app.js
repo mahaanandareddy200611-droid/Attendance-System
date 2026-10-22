@@ -161,9 +161,32 @@ app.get("/api/v1/livez", (req, res) => {
   });
 });
 
-app.get("/api/v1/readyz", (req, res) => {
-  const result = evaluateReadiness({ env: process.env, mongoReady: mongoose.connection.readyState === 1, redisReady: redisClient.isReady });
-  return res.status(result.ready ? 200 : 503).json({ success: result.ready, status: result.ready ? "ready" : "not_ready", dependencies: result.dependencies, requirements: result.requirements, requestId: req.id });
+app.get("/api/v1/readyz", async (req, res) => {
+  const readinessInput = {
+    env: process.env,
+    mongoReady: mongoose.connection.readyState === 1,
+    redisReady: redisClient.isReady,
+  };
+
+  // Configuration alone does not prove a required external provider is live.
+  // Probe its authenticated API contract so Render cannot mark a broken
+  // biometric dependency as ready. The provider health endpoint is lightweight.
+  const configuredReadiness = evaluateReadiness(readinessInput);
+  const biometricProviderReady = configuredReadiness.requirements.biometric
+    ? await require("./modules/Biometric/LocalBiometricProvider").checkHealth()
+    : undefined;
+  const result = evaluateReadiness({
+    ...readinessInput,
+    ...(biometricProviderReady === undefined ? {} : { biometricProviderReady }),
+  });
+
+  return res.status(result.ready ? 200 : 503).json({
+    success: result.ready,
+    status: result.ready ? "ready" : "not_ready",
+    dependencies: result.dependencies,
+    requirements: result.requirements,
+    requestId: req.id,
+  });
 });
 //================================================================================================
 /// routes for all the development
