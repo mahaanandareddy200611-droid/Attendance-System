@@ -43,6 +43,9 @@ jobs:
       - name: Install dependencies
         working-directory: lecturer-web
         run: npm ci
+      - name: Audit locked frontend dependencies
+        working-directory: lecturer-web
+        run: npm audit
       - name: Test frontend utilities and API contracts
         working-directory: lecturer-web
         run: npm test
@@ -56,6 +59,13 @@ jobs:
         run: npm run check:build-api-origin
         env:
           VITE_API_BASE_URL: https://attendance-backend-staging-n04q.onrender.com/api/v1
+      - name: Install Playwright Chromium
+        working-directory: lecturer-web
+        run: npx --yes --package=playwright@1.64.1 --package=@axe-core/playwright@4.10.2 playwright install --with-deps chromium
+      - name: Run lecturer browser workflows with mocked API
+        working-directory: lecturer-web
+        shell: bash
+        run: npx --yes --package=playwright@1.64.1 --package=@axe-core/playwright@4.10.2 -c 'NODE_PATH="$(dirname "$(dirname "$(command -v playwright)")")" npm run test:e2e'
       - name: Lint web client
         working-directory: lecturer-web
         run: npm run lint

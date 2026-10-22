@@ -119,7 +119,7 @@
   box-shadow: var(--shadow-card);
 }
 .admin-summary-card span {
-  color: #718097;
+  color: #536176;
   font-size: 12px;
   font-weight: 600;
 }
@@ -130,7 +130,7 @@
   letter-spacing: -0.04em;
 }
 .admin-summary-card small {
-  color: #8a96a8;
+  color: #5c687b;
   font-size: 11px;
 }
 .admin-quick-actions {
@@ -196,7 +196,7 @@
 }
 .academic-card-title p,
 .academic-roster-heading p {
-  color: #8791a3;
+  color: #5c687b;
   font-size: 12px;
 }
 .academic-field {
@@ -234,7 +234,7 @@
   box-shadow: 0 0 0 4px rgba(53, 89, 215, 0.1);
 }
 .academic-field input::placeholder {
-  color: #a0a8b6;
+  color: #68768a;
 }
 
 .academic-topbar nav {
@@ -252,7 +252,7 @@
   align-items: center;
   padding: 0 11px;
   border-radius: 9px;
-  color: #69778d;
+  color: #536176;
   font-size: 12px;
   font-weight: 620;
   text-decoration: none;
@@ -292,7 +292,7 @@
   white-space: nowrap;
 }
 .workspace-user-role {
-  color: #8793a5;
+  color: #5c687b;
   font-size: 10px;
 }
 .academic-topbar .workspace-signout {
@@ -325,7 +325,7 @@
 }
 .student-privacy-note {
   margin-top: 14px;
-  color: #748096;
+  color: #59677b;
   font-size: 12px;
   line-height: 1.55;
 }
@@ -342,7 +342,7 @@
   border-radius: 10px;
 }
 .student-section-item span {
-  color: #8791a3;
+  color: #5c687b;
   font-size: 12px;
 }
 .report-toolbar {
@@ -361,7 +361,7 @@
   justify-content: flex-end;
   gap: 12px;
   padding-top: 18px;
-  color: #697386;
+  color: #536176;
   font-size: 13px;
 }
 .academic-button.secondary {
@@ -374,7 +374,7 @@
 .academic-field small {
   display: block;
   margin-top: 5px;
-  color: #8a94a6;
+  color: #5c687b;
   font-size: 11px;
 }
 .academic-form-row {
@@ -453,7 +453,7 @@
 }
 .academic-footnote {
   margin: 18px 2px 0;
-  color: #8b94a4;
+  color: #5c687b;
   font-size: 12px;
   line-height: 1.6;
 }
@@ -487,7 +487,7 @@
 .academic-table th {
   padding: 13px 15px;
   text-align: left;
-  color: #6e7c91;
+  color: #536176;
   background: #f7f9fc;
   font-size: 10px;
   text-transform: uppercase;
@@ -518,7 +518,7 @@
   padding: 5px 9px;
   border-radius: 20px;
   background: #f0f3f8;
-  color: #627087;
+  color: #536176;
   font-size: 10px;
   font-weight: 750;
   letter-spacing: 0.025em;
@@ -547,7 +547,7 @@
 }
 .academic-empty {
   padding: 24px 0;
-  color: #838da0;
+  color: #5b687d;
   font-size: 13px;
 }
 .academic-empty-state {
@@ -566,7 +566,7 @@
   font-weight: 800;
 }
 .academic-empty-state p {
-  color: #778297;
+  color: #59677b;
   line-height: 1.65;
   font-size: 13px;
   margin: 8px 0 20px;
@@ -721,7 +721,7 @@
   margin: 0 0 6px;
 }
 .lecturer-live-card > div:first-child p:not(.academic-eyebrow) {
-  color: #778297;
+  color: #59677b;
   font-size: 12px;
 }
 .lecturer-live-qr {
@@ -741,7 +741,7 @@
   margin: 22px auto;
   background: #f7f8fb;
   border-radius: 10px;
-  color: #778297;
+  color: #59677b;
   font-size: 13px;
 }
 .lecturer-end-button {
@@ -777,12 +777,12 @@
   font-size: 12px;
 }
 .student-setup-copy span {
-  color: #8993a4;
+  color: #5c687b;
   font-size: 11px;
 }
 .student-setup-item input[type="file"] {
   width: 100%;
-  color: #778297;
+  color: #59677b;
   font: inherit;
   font-size: 11px;
 }
@@ -801,7 +801,7 @@
   font-size: 17px;
 }
 .student-scan-instructions p {
-  color: #8791a3;
+  color: #5c687b;
   font-size: 12px;
 }
 .student-qr-reader {

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "prebuild": "node scripts/check-api-origin.mjs",
     "test": "node --test tests/api-origin.test.mjs tests/csv.test.mjs tests/navigation.test.mjs tests/api-contract.test.mjs",
-    "check:build-api-origin": "node scripts/check-build-api-origin.mjs"
+    "check:build-api-origin": "node scripts/check-build-api-origin.mjs",
+    "test:e2e": "node tests/e2e-smoke.cjs"
   },
   "dependencies": {
     "axios": "^1.20.0",
