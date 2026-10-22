@@ -1,6 +1,6 @@
 export const API_BASE_URL = (
   process.env.EXPO_PUBLIC_API_BASE_URL ||
-  "https://attendance-backend-staging.onrender.com/api/v1"
+  "https://attendance-backend-staging-n04q.onrender.com/api/v1"
 ).replace(/\/+$/, "");
 
 export type ApiEnvelope<T> = {
