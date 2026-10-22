@@ -10,6 +10,7 @@ import {
 import { getApiErrorMessage } from "../api/errors";
 import "../Styles/Academic.css";
 import WorkspaceHeader from "../components/WorkspaceHeader";
+import { createCsv, downloadCsv } from "../utils/csv.js";
 
 const emptyResult = { session: null, data: [], pagination: null };
 
@@ -24,63 +25,60 @@ export default function LecturerSessionResults() {
   const [evidenceFile, setEvidenceFile] = useState(null);
   const [evidenceBusy, setEvidenceBusy] = useState(false);
   const [evidenceNotice, setEvidenceNotice] = useState("");
+  const [refreshVersion, setRefreshVersion] = useState(0);
 
-  const load = async () => {
+  const load = () => {
     setBusy(true);
     setError("");
-    try {
-      const response = await getSessionAttendance(sessionId, {
-        q: query,
-        page,
-        limit: 50,
-      });
-      setResult({
-        session: response.data.session,
-        data: response.data.data || [],
-        pagination: response.data.pagination,
-      });
-    } catch (requestError) {
-      setError(
-        getApiErrorMessage(requestError, "Could not load this session roster."),
-      );
-    } finally {
-      setBusy(false);
-    }
+    setRefreshVersion((value) => value + 1);
   };
 
   useEffect(() => {
     let active = true;
-    const timer = window.setTimeout(
-      () => {
-        getSessionAttendance(sessionId, { q: query, page, limit: 50 })
-          .then((response) => {
-            if (!active) return;
-            setResult({
-              session: response.data.session,
-              data: response.data.data || [],
-              pagination: response.data.pagination,
-            });
-          })
-          .catch((requestError) => {
-            if (active)
-              setError(
-                getApiErrorMessage(
-                  requestError,
-                  "Could not load this session roster.",
-                ),
-              );
-          })
-          .finally(() => {
-            if (active) setBusy(false);
-          });
-      },
-      query ? 250 : 0,
-    );
+    let timer;
+    let controller;
+    let inFlight = false;
+
+    const refresh = async () => {
+      if (!active || inFlight) return;
+      setBusy(true);
+      setError("");
+      inFlight = true;
+      controller = new AbortController();
+      try {
+        const response = await getSessionAttendance(
+          sessionId,
+          { q: query, page, limit: 50 },
+          { signal: controller.signal },
+        );
+        if (!active) return;
+        setResult({
+          session: response.data?.session || null,
+          data: Array.isArray(response.data?.data) ? response.data.data : [],
+          pagination: response.data?.pagination || null,
+        });
+        setError("");
+      } catch (requestError) {
+        if (active && !controller.signal.aborted) {
+          setError(getApiErrorMessage(requestError, "Could not load or refresh this session roster."));
+        }
+      } finally {
+        inFlight = false;
+        if (active) {
+          setBusy(false);
+          // Schedule after completion to prevent overlapping polls.
+          timer = window.setTimeout(refresh, 5000);
+        }
+      }
+    };
+
+    timer = window.setTimeout(refresh, query ? 250 : 0);
     return () => {
       active = false;
       window.clearTimeout(timer);
+      if (controller) controller.abort();
     };
-  }, [sessionId, query, page]);
+  }, [sessionId, query, page, refreshVersion]);
 
   const loadEvidence = async () => {
     try {
@@ -113,37 +111,6 @@ export default function LecturerSessionResults() {
     };
   }, [sessionId]);
 
-  // Reconcile missed Socket.IO notifications by reading the authoritative API.
-  useEffect(() => {
-    let active = true;
-    const refresh = async () => {
-      try {
-        const response = await getSessionAttendance(sessionId, {
-          q: query,
-          page,
-          limit: 50,
-        });
-        if (!active) return;
-        setResult({
-          session: response.data.session,
-          data: response.data.data || [],
-          pagination: response.data.pagination,
-        });
-        setError("");
-      } catch (requestError) {
-        if (active) {
-          setError(
-            getApiErrorMessage(requestError, "Could not refresh live attendance."),
-          );
-        }
-      }
-    };
-    const timer = window.setInterval(() => void refresh(), 5000);
-    return () => {
-      active = false;
-      window.clearInterval(timer);
-    };
-  }, [sessionId, query, page]);
 
   const submitEvidence = async (event) => {
     event.preventDefault();
@@ -169,14 +136,19 @@ export default function LecturerSessionResults() {
   const openEvidence = async (assetId) => {
     setEvidenceBusy(true);
     setEvidenceNotice("");
+    let popup = null;
     try {
+      // Open synchronously in the click handler; opening after await can be blocked.
+      popup = window.open("about:blank", "_blank");
+      if (popup) popup.opener = null;
+      if (!popup) throw new Error("Your browser blocked the evidence tab. Allow pop-ups and try again.");
       const response = await getSessionEvidenceUrl(assetId);
-      const url = response.data.data.url;
-      window.open(url, "_blank", "noopener,noreferrer");
+      const url = new URL(response.data?.data?.url || "");
+      if (url.protocol !== "https:") throw new Error("The server returned an unsafe evidence link.");
+      popup.location.replace(url.href);
     } catch (requestError) {
-      setEvidenceNotice(
-        getApiErrorMessage(requestError, "Could not open private evidence."),
-      );
+      if (popup && !popup.closed) popup.close();
+      setEvidenceNotice(getApiErrorMessage(requestError, "Could not open private evidence."));
     } finally {
       setEvidenceBusy(false);
     }
@@ -200,37 +172,15 @@ export default function LecturerSessionResults() {
   };
 
   const exportCsv = () => {
-    const headers = [
-      "Roll number",
-      "Student",
-      "Email",
-      "Attendance",
-      "Marked at",
-    ];
+    const headers = ["Roll number", "Student", "Email", "Attendance", "Marked at"];
     const rows = result.data.map((row) => [
       row.rollNumber,
       row.studentId?.Name,
       row.studentId?.email,
-      row.status,
-      row.attendance?.markedAt
-        ? new Date(row.attendance.markedAt).toISOString()
-        : "",
+      row.status || "Unknown",
+      row.attendance?.markedAt ? new Date(row.attendance.markedAt).toISOString() : "",
     ]);
-    const csv = [headers, ...rows]
-      .map((row) =>
-        row
-          .map((value) => `"${String(value ?? "").replaceAll('"', '""')}"`)
-          .join(","),
-      )
-      .join("\r\n");
-    const url = URL.createObjectURL(
-      new Blob([csv], { type: "text/csv;charset=utf-8" }),
-    );
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = `attendance-${sessionId}.csv`;
-    anchor.click();
-    URL.revokeObjectURL(url);
+    downloadCsv("attendance-" + sessionId + ".csv", createCsv(headers, rows));
   };
 
   const pagination = result.pagination;
@@ -289,11 +239,12 @@ export default function LecturerSessionResults() {
             onClick={exportCsv}
             disabled={!result.data.length}
           >
-            Export CSV
+              Export current page
           </button>
         </div>
 
-        <section className="academic-card">
+        <section className="academic-card" aria-busy={busy}>
+          {busy && <p className="academic-empty" role="status">Loading attendance results…</p>}
           <div className="academic-table-wrap">
             <table className="academic-table">
               <thead>
@@ -308,14 +259,14 @@ export default function LecturerSessionResults() {
               <tbody>
                 {result.data.map((row) => (
                   <tr key={row._id}>
-                    <td>{row.rollNumber}</td>
+                    <td>{row.rollNumber || "—"}</td>
                     <td>{row.studentId?.Name || "—"}</td>
                     <td>{row.studentId?.email || "—"}</td>
                     <td>
                       <span
-                        className={`attendance-state ${String(row.status).toLowerCase()}`}
+                        className={"attendance-state " + String(row.status || "unknown").toLowerCase().replace(/[^a-z0-9_-]/g, "")}
                       >
-                        {row.status}
+                        {row.status || "Unknown"}
                       </span>
                     </td>
                     <td>

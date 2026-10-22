@@ -68,9 +68,13 @@ export function AuthProvider({ children }) {
 
       try {
         const response = await GetCurrentUser();
+        const restoredUser = response?.data?.data;
+        if (!restoredUser || !["Admin", "Lecturer", "Student"].includes(restoredUser.role)) {
+          throw new Error("The server returned an invalid session profile.");
+        }
         if (active) {
-          setUser(response.data.data);
-          sessionStorage.setItem("user", JSON.stringify(response.data.data));
+          setUser(restoredUser);
+          sessionStorage.setItem("user", JSON.stringify(restoredUser));
         }
       } catch {
         clearStoredSession();
@@ -97,7 +101,11 @@ export function AuthProvider({ children }) {
     const response = await loginRequest(credentials);
     const { token, data: authenticatedUser } = response.data;
 
-    if (!token || !authenticatedUser?.role) {
+    if (
+      !token ||
+      !authenticatedUser ||
+      !["Admin", "Lecturer", "Student"].includes(authenticatedUser.role)
+    ) {
       throw new Error("The server returned an invalid login response.");
     }
 

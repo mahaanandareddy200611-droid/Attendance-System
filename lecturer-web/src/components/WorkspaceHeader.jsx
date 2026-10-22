@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { Link, NavLink, useLocation } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
 
@@ -28,7 +29,18 @@ const homeByRole = {
 export default function WorkspaceHeader() {
   const { user, logout } = useAuth();
   const { pathname } = useLocation();
+  const [signingOut, setSigningOut] = useState(false);
   const role = user?.role;
+
+  const handleSignOut = async () => {
+    if (signingOut) return;
+    setSigningOut(true);
+    try {
+      await logout();
+    } finally {
+      setSigningOut(false);
+    }
+  };
 
   return (
     <header className="academic-topbar">
@@ -69,8 +81,8 @@ export default function WorkspaceHeader() {
           <span className="workspace-user-name">{user?.name || role}</span>
           <span className="workspace-user-role">{role}</span>
         </div>
-        <button className="workspace-signout" type="button" onClick={logout}>
-          Sign out
+        <button className="workspace-signout" type="button" onClick={handleSignOut} disabled={signingOut}>
+          {signingOut ? "Signing out…" : "Sign out"}
         </button>
       </div>
     </header>

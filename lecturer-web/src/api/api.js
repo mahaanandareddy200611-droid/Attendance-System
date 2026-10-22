@@ -1,44 +1,9 @@
 import axios from "axios";
 import { previewAdapter } from "./previewAdapter";
-
-function resolveApiBaseUrl() {
-  const configured = String(import.meta.env.VITE_API_BASE_URL || "").trim();
-
-  // Local development remains convenient, but production must never silently
-  // ship a bundle that sends authenticated requests to the user's localhost.
-  if (!configured) {
-    if (import.meta.env.DEV) return "http://localhost:3000/api/v1";
-    throw new Error("VITE_API_BASE_URL must be set to the deployed HTTPS API base ending in /api/v1.");
-  }
-
-  let url;
-  try {
-    url = new URL(configured);
-  } catch {
-    throw new Error("VITE_API_BASE_URL must be a valid absolute URL.");
-  }
-
-  const localHttpAllowed =
-    import.meta.env.DEV &&
-    url.protocol === "http:" &&
-    ["localhost", "127.0.0.1"].includes(url.hostname);
-
-  if (
-    (url.protocol !== "https:" && !localHttpAllowed) ||
-    url.username ||
-    url.password ||
-    url.search ||
-    url.hash ||
-    url.pathname.replace(/\/+$/, "") !== "/api/v1"
-  ) {
-    throw new Error("VITE_API_BASE_URL must use HTTPS and end exactly in /api/v1 (without credentials or query parameters).");
-  }
-
-  return url.origin + "/api/v1";
-}
+import { resolveApiBaseUrl } from "./apiOrigin.js";
 
 const api = axios.create({
-  baseURL: resolveApiBaseUrl(),
+  baseURL: resolveApiBaseUrl(import.meta.env.VITE_API_BASE_URL, { dev: import.meta.env.DEV }),
   timeout: 15000,
   headers: {
     Accept: "application/json",

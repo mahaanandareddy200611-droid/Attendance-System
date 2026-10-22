@@ -1,16 +1,32 @@
-# React + Vite
+# Attendance lecturer web
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+React 19 + Vite client for the authenticated lecturer and administrator workflows in Attendance-System.
 
-Currently, two official plugins are available:
+## Local development
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+1. Install Node.js 24 or newer.
+2. From this directory, run \`npm ci\`.
+3. Start the Vite development server with \`npm run dev\`.
 
-## React Compiler
+The Vite development server falls back to \`http://localhost:3000/api/v1\` when
+\`VITE_API_BASE_URL\` is omitted. Copy \`.env.example\` only when your local API
+uses that address. To work against staging, set \`VITE_API_BASE_URL\` to the
+public HTTPS API ending exactly in \`/api/v1\`.
 
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
+Do not put access tokens, provider keys, passwords, or other secrets in Vite
+environment variables; values prefixed with \`VITE_\` are embedded in the browser
+bundle.
 
-## Expanding the ESLint configuration
+## Verify before delivery
 
-If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and [`typescript-eslint`](https://typescript-eslint.io) in your project.
+- \`npm test\` runs deterministic Node.js unit and source-contract tests.
+- \`npm run lint\` runs ESLint.
+- \`VITE_API_BASE_URL=https://your-api.example/api/v1 npm run build\` validates the
+  production API origin and builds the site.
+- With the same \`VITE_API_BASE_URL\` value, run
+  \`npm run check:build-api-origin\` to confirm the built bundle embeds the
+  configured API origin and does not contain the retired staging host.
+
+The source-contract tests compare frontend endpoint paths against the current
+backend router definitions. They do not replace authorized staging/browser
+end-to-end testing.

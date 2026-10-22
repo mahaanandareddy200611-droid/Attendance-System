@@ -1011,3 +1011,56 @@
     grid-template-columns: minmax(0, 1fr);
   }
 }
+
+
+/* Final accessibility and smaller-screen polish */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    scroll-behavior: auto !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+.academic-notice[role="alert"],
+.form-message[role="alert"] {
+  overflow-wrap: anywhere;
+}
+
+.academic-field input:disabled,
+.academic-field select:disabled,
+.academic-field textarea:disabled {
+  cursor: not-allowed;
+  color: #78869a;
+  background: #f5f7fb;
+}
+
+.academic-table td,
+.academic-table th {
+  vertical-align: middle;
+}
+
+.academic-table th {
+  text-align: left;
+}
+
+@media (max-width: 480px) {
+  .academic-heading {
+    flex-wrap: wrap;
+  }
+
+  .academic-role {
+    flex: 0 0 auto;
+  }
+
+  .lecturer-live-card {
+    width: 100%;
+  }
+
+  .academic-button {
+    min-height: 44px;
+  }
+}
