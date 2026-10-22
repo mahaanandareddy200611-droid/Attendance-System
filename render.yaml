@@ -6,7 +6,7 @@ services:
     region: singapore
     dockerfilePath: ./backend/Dockerfile
     dockerContext: ./backend
-    healthCheckPath: /api/v1/readyz
+    healthCheckPath: /api/v1/livez
     autoDeployTrigger: off
     envVars:
       - key: NODE_ENV
