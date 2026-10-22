@@ -60,9 +60,9 @@
   font-weight: 800;
 }
 
-.subtitle {
+.auth-card > .subtitle {
   margin: 0 0 28px;
-  color: var(--color-muted);
+  color: #536176;
   text-align: center;
   font-size: 14px;
   line-height: 1.6;

@@ -55,9 +55,7 @@ if (!mongoUrl || !configuredRedisUrl) {
   const AttendanceAttempt = require("../../src/models/AttendanceAttempt.model");
   const AuditEvent = require("../../src/models/AuditEvent.model");
   const Idempotency = require("../../src/models/Idempotency.model");
-  const DeviceCredential = require("../../src/models/DeviceCredential.model");
   const BiometricEnrollment = require("../../src/models/BiometricEnrollment.model");
-  const { buildAttendanceSignaturePayload } = require("../../src/modules/Device/attendanceSignaturePayload");
 
   const CLIENT_COUNT = 300;
 
@@ -80,7 +78,6 @@ if (!mongoUrl || !configuredRedisUrl) {
     let sessionDoc;
     let users = [];
     let enrollments = [];
-    let deviceCredentials = [];
     let biometricEnrollments = [];
     const assertionIds = [];
     const runId = crypto.randomUUID();
@@ -134,7 +131,6 @@ if (!mongoUrl || !configuredRedisUrl) {
             await Promise.all([
               Idempotency.deleteMany({ studentId: { $in: studentIds } }),
               BiometricEnrollment.deleteMany({ userId: { $in: studentIds } }),
-              DeviceCredential.deleteMany({ userId: { $in: studentIds } }),
               Enrollment.deleteMany({ studentId: { $in: studentIds } }),
               User.deleteMany({ _id: { $in: studentIds } }),
             ]);
@@ -213,15 +209,6 @@ if (!mongoUrl || !configuredRedisUrl) {
       status: "ACTIVE",
     })), { ordered: true });
 
-    const keyPairs = users.map(() => crypto.generateKeyPairSync("ed25519"));
-    deviceCredentials = await DeviceCredential.insertMany(users.map((student, index) => ({
-      userId: student._id,
-      deviceId: "load-device-" + suffix + "-" + index,
-      algorithm: "Ed25519",
-      publicKey: keyPairs[index].publicKey.export({ type: "spki", format: "pem" }),
-      status: "ACTIVE",
-    })), { ordered: true });
-
     biometricEnrollments = await BiometricEnrollment.insertMany(users.map((student) => ({
       userId: student._id,
       provider: "LOCAL",
@@ -255,9 +242,9 @@ if (!mongoUrl || !configuredRedisUrl) {
     assert.ok(token);
 
     // These test-only assertions bypass ML inference intentionally. This test
-    // isolates the final API/device/Redis/database transaction under contention.
+    // isolates the QR/Redis/database transaction under contention.
     // Live face/liveness capacity is measured separately with the real provider.
-    const fixture = await Promise.all(users.map(async (student, index) => {
+    const fixture = await Promise.all(users.map(async (student) => {
       const assertionId = crypto.randomUUID();
       assertionIds.push(assertionId);
       const assertion = {
@@ -266,7 +253,7 @@ if (!mongoUrl || !configuredRedisUrl) {
         livenessPassed: true,
         faceMatchPassed: true,
         activeLivenessPassed: true,
-        livenessMode: "LOAD_TEST_ONLY",
+        livenessMode: "ACTIVE_SEQUENCE_V1",
         providerUserId: String(student._id),
       };
       const stored = await redisClient.set(
@@ -278,35 +265,25 @@ if (!mongoUrl || !configuredRedisUrl) {
 
       const idempotencyKey = crypto.randomUUID();
       const capturedAt = new Date().toISOString();
-      const deviceId = deviceCredentials[index].deviceId;
-      const payloadString = buildAttendanceSignaturePayload({
-        deviceId,
-        sessionId: publicSessionId,
-        token,
-        idempotencyKey,
-        biometricAssertionId: assertionId,
-        latitude: room.latitude,
-        longitude: room.longitude,
-        accuracyMeters: 5,
-        capturedAt,
+      const studentToken = jwt.sign(
+        { id: String(student._id), role: "Student", tokenVersion: 0 },
+        process.env.JWT_SECRET,
+        { expiresIn: "1h" },
+      );
+      const preflight = await api("/api/v1/attendance/preflight", {
+        method: "POST",
+        token: studentToken,
+        body: { token, sessionId: publicSessionId },
       });
-      const signature = crypto.sign(
-        null,
-        Buffer.from(payloadString, "utf8"),
-        keyPairs[index].privateKey,
-      ).toString("base64url");
+      if (preflight.status !== 200 || !preflight.data?.data?.checkinIntentId) {
+        throw new Error("QR preflight failed for a load-test student: " + JSON.stringify(preflight.data));
+      }
 
       return {
-        token: jwt.sign(
-          { id: String(student._id), role: "Student", tokenVersion: 0 },
-          process.env.JWT_SECRET,
-          { expiresIn: "1h" },
-        ),
+        token: studentToken,
         idempotencyKey,
         body: {
-          token,
-          deviceId,
-          deviceSignature: signature,
+          checkinIntentId: preflight.data.data.checkinIntentId,
           biometricAssertionId: assertionId,
           latitude: room.latitude,
           longitude: room.longitude,

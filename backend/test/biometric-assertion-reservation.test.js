@@ -6,6 +6,7 @@ const { redisClient } = require("../src/config/redis");
 
 const {
     reserveAssertion,
+    validateAssertion,
     releaseAssertionReservation,
     finalizeAssertionReservation
 } = require("../src/modules/Biometric/BiometricService");
@@ -23,6 +24,8 @@ function validAssertion() {
         providerUserId: USER_ID,
         livenessPassed: true,
         faceMatchPassed: true,
+        activeLivenessPassed: true,
+        livenessMode: "ACTIVE_SEQUENCE_V1",
         similarity: 0.96
     };
 }
@@ -121,6 +124,40 @@ function reserve(reservationId, overrides = {}) {
         ...overrides
     });
 }
+
+test("rejects an assertion produced without the active three-frame liveness sequence", async (t) => {
+    mockRedis(t, {
+        [KEY]: {
+            ...validAssertion(),
+            activeLivenessPassed: false,
+            livenessMode: undefined
+        }
+    });
+
+    await assert.rejects(
+        reserve("attendance-key-1"),
+        (error) => error.statusCode === 401 && /active face\/liveness/i.test(error.message)
+    );
+});
+
+test("validateAssertion rejects legacy single-image biometric assertions", async (t) => {
+    mockRedis(t, {
+        [KEY]: {
+            ...validAssertion(),
+            activeLivenessPassed: undefined,
+            livenessMode: undefined
+        }
+    });
+
+    await assert.rejects(
+        validateAssertion({
+            assertionId: ASSERTION_ID,
+            userId: USER_ID,
+            sessionId: SESSION_ID
+        }),
+        (error) => error.statusCode === 401 && /active face\/liveness/i.test(error.message)
+    );
+});
 
 test("reserves an assertion for the correct student and session", async (t) => {
     const entries = mockRedis(t, {

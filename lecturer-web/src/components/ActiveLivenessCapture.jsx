@@ -19,16 +19,37 @@ export default function ActiveLivenessCapture({
   const [frames, setFrames] = useState([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (cameraActive && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => {
-        setMessage("Camera playback was blocked. Allow camera permission and try again.");
-      });
-    }
+    if (!cameraActive || !videoRef.current || !streamRef.current) return undefined;
+
+    const video = videoRef.current;
+    const markReady = () => {
+      if (
+        video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA &&
+        video.videoWidth > 0 &&
+        video.videoHeight > 0
+      ) {
+        setCameraReady(true);
+      }
+    };
+    const onPlayFailure = () => {
+      setMessage("Camera playback was blocked. Allow camera permission and try again.");
+    };
+
+    video.addEventListener("loadeddata", markReady);
+    video.addEventListener("playing", markReady);
+    video.srcObject = streamRef.current;
+    video.play().then(markReady).catch(onPlayFailure);
+    markReady();
+
+    return () => {
+      video.removeEventListener("loadeddata", markReady);
+      video.removeEventListener("playing", markReady);
+    };
   }, [cameraActive]);
 
   useEffect(() => () => stopStream(streamRef.current), []);
@@ -37,12 +58,21 @@ export default function ActiveLivenessCapture({
     stopStream(streamRef.current);
     streamRef.current = null;
     setCameraActive(false);
+    setCameraReady(false);
     setChallenge(null);
     setFrames([]);
     setCurrentStep(0);
   };
 
   const start = async () => {
+    if (!window.isSecureContext) {
+      setMessage("Camera access requires the HTTPS website. Open the deployed secure website and try again.");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia) {
+      setMessage("This browser cannot open a live camera. Use a supported browser on the secure HTTPS website.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     reset();
@@ -65,6 +95,7 @@ export default function ActiveLivenessCapture({
       stopStream(streamRef.current);
       streamRef.current = null;
       setCameraActive(false);
+      setCameraReady(false);
       setMessage(
         error?.response?.data?.error?.message ||
           error.message ||
@@ -127,6 +158,7 @@ export default function ActiveLivenessCapture({
       stopStream(streamRef.current);
       streamRef.current = null;
       setCameraActive(false);
+      setCameraReady(false);
       setChallenge(null);
       setFrames([]);
       setCurrentStep(0);
@@ -153,6 +185,9 @@ export default function ActiveLivenessCapture({
         <strong>Active face and liveness check</strong>
         <span>Capture a center frame and follow the server's randomized left/right turn instructions.</span>
       </div>
+      {cameraActive && !cameraReady && (
+        <p className="academic-footnote" role="status">Starting camera preview… capture will unlock when a live frame is ready.</p>
+      )}
       {cameraActive && (
         <>
           <video
@@ -180,7 +215,7 @@ export default function ActiveLivenessCapture({
         </button>
       ) : (
         <div className="active-liveness-actions">
-          <button type="button" className="academic-button" onClick={captureFrame} disabled={disabled || busy}>
+          <button type="button" className="academic-button" onClick={captureFrame} disabled={disabled || busy || !cameraReady}>
             {busy ? "Processing…" : `Capture frame ${currentStep + 1} of 3`}
           </button>
           <button type="button" className="academic-button secondary" onClick={reset} disabled={busy}>

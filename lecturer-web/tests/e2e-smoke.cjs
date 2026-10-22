@@ -28,7 +28,7 @@ before(async () => {
     await sleep(250);
   }
   assert.ok(ready, "Vite did not become ready in 30 seconds");
-  browser = await chromium.launch({ headless: true });
+  browser = await chromium.launch({ headless: true, args: ["--use-fake-device-for-media-stream", "--use-fake-ui-for-media-stream"] });
 });
 
 afterEach(async () => {
@@ -135,6 +135,13 @@ test("login rejects invalid credentials, supports keyboard focus, routes by role
   await login(page, "Lecturer");
   await page.waitForURL(/\/lecturer\/dashboard$/);
   await page.getByRole("heading", { name: "Welcome, Lecturer" }).waitFor();
+  const dashboardStyle = await page.locator(".academic-page").evaluate((element) => ({
+    background: getComputedStyle(element).backgroundColor,
+    paddingTop: getComputedStyle(element).paddingTop,
+  }));
+  assert.notEqual(dashboardStyle.background, "rgba(0, 0, 0, 0)",
+    "The lecturer dashboard shared stylesheet must be loaded");
+
   assert.equal(await page.evaluate(() => sessionStorage.getItem("token")), "browser-e2e-token");
   await assertNoHorizontalOverflow(page);
   await page.getByRole("button", { name: "Sign out" }).click();
@@ -224,6 +231,72 @@ test("password recovery checks OTP, blocks mismatched passwords and submits the 
   await page.waitForURL(/\/login$/);
   assert.ok(calls.some((c) => c.path === "/auth/verify-reset-otp" && c.body.otp === "123456"));
   assert.ok(calls.some((c) => c.path === "/auth/reset-password" && c.body.resetToken === "A".repeat(43)));
+});
+
+
+
+test("lecturer can recover a direct live-session URL and display its QR after a temporary list failure", async () => {
+  const page = await newPage();
+  const session = {
+    sessionId: "direct-e2e-session",
+    courseCode: "CS101",
+    section: "A",
+    status: "ACTIVE",
+    startedAt: new Date(Date.now() - 30000).toISOString(),
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+    eligibleStudentCount: 12,
+  };
+  const section = {
+    _id: "direct-e2e-section",
+    courseId: { _id: "course-e2e", code: "CS101", name: "Introduction to Computing" },
+    name: "A",
+    academicYear: "2026-2027",
+  };
+  let simulateDirectPageOutage = false;
+  let directPageListRequests = 0;
+  const calls = await mockApi(page, authHandler("Lecturer", async (call) => {
+    if (call.path === "/academic/sections" && call.method === "GET") {
+      return json({ data: [section] });
+    }
+    if (call.path === "/attendance/sessions" && call.method === "GET") {
+      // Explicitly arm the failure only after the dashboard has loaded. Do not
+      // rely on page.url() from inside a navigation-time API interception.
+      if (simulateDirectPageOutage) {
+        directPageListRequests += 1;
+        if (directPageListRequests === 1) {
+          return json({ error: { message: "Temporary session list outage" } }, 503);
+        }
+      }
+      return json({ data: [session], pagination: { page: 1, limit: 100, total: 1, pages: 1 } });
+    }
+    if (call.path === "/attendance/sessions/direct-e2e-session/qr" && call.method === "GET") {
+      return json({
+        data: {
+          sessionId: session.sessionId,
+          token: "e2e-fresh-qr-token-1234567890",
+          expiresAt: new Date(Date.now() + 3000).toISOString(),
+          refreshMs: 5000,
+        },
+      });
+    }
+    return json({ data: [] });
+  }));
+
+  await page.goto(base + "/login");
+  await login(page, "Lecturer");
+  await page.waitForURL(/\/lecturer\/dashboard$/);
+  // Let the dashboard finish its own requests, then force the first direct-route
+  // sessions-list request to fail. The subsequent manual retry should recover.
+  await page.waitForLoadState("networkidle");
+  simulateDirectPageOutage = true;
+  await page.goto(base + "/lecturer/sessions/direct-e2e-session/live");
+  await page.getByRole("heading", { name: "Recover live attendance session" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Start attendance", exact: true }).count(), 0);
+
+  await page.getByRole("button", { name: "Retry loading session", exact: true }).click();
+  await page.getByRole("img", { name: "Server-issued rotating attendance QR code" }).waitFor();
+  assert.ok(directPageListRequests >= 2, "the direct-page session list should be retried");
+  assert.ok(calls.some((call) => call.path === "/attendance/sessions/direct-e2e-session/qr" && call.method === "GET"));
 });
 
 test("lecturer starts and ends a session, and a stale QR disappears after refresh fails", async () => {
@@ -532,11 +605,12 @@ test("Admin browser forms create a course, section, enrollment and Lecturer acco
   assert.ok(calls.some((c) => c.method === "POST" && c.path === "/auth/lecturers" && c.body.email === "newlecturer@example.test"));
 });
 
-test("student browser portal loads assigned classes, live check-ins and history", async () => {
+
+
+test("student dashboard loads with QR-first setup and never calls device-registration APIs", async () => {
   const page = await newPage({ viewport: { width: 390, height: 844 } });
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-
   const section = {
     _id: "student-section-1",
     courseId: { _id: "course-1", code: "CS101", name: "Introduction to Computing" },
@@ -551,36 +625,236 @@ test("student browser portal loads assigned classes, live check-ins and history"
     startedAt: new Date(Date.now() - 30000).toISOString(),
     expiresAt: new Date(Date.now() + 60000).toISOString(),
   };
-
-  const handler = authHandler("Student", async (call) => {
-    if (call.path === "/devices/me" && call.method === "GET") return json({ data: null });
-    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: { status: "NONE" } });
+  const calls = await mockApi(page, authHandler("Student", async (call) => {
+    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: { status: "ACTIVE" } });
     if (call.path === "/academic/sections" && call.method === "GET") return json({ data: [section] });
     if (call.path === "/attendance/records/me" && call.method === "GET") return json({ data: [] });
     if (call.path === "/attendance/sessions/available" && call.method === "GET") return json({ data: [session] });
     return json({ data: [] });
-  });
-  const calls = await mockApi(page, handler);
+  }));
 
   await page.goto(base + "/login");
   await login(page, "Student");
   await page.waitForURL(/\/student\/dashboard$/);
-  await page.getByRole("heading", { name: "Scan QR to check in" }).waitFor();
+  await page.getByRole("heading", { name: "Check in to your class" }).waitFor();
+  await page.getByRole("heading", { name: "One-time face enrollment" }).waitFor();
+  await page.getByText("Face enrollment is active").waitFor();
   await page.getByText("CS101 · Section A", { exact: true }).first().waitFor();
   await page.getByText("Introduction to Computing").waitFor();
   await page.getByRole("heading", { name: "Available check-ins" }).waitFor();
   await page.getByRole("heading", { name: "Recent attendance" }).waitFor();
-  await page.getByText("No attendance records yet.").waitFor();
+  await page.getByRole("button", { name: "Select session", exact: true }).click();
+  await page.getByRole("heading", { name: "Scan and validate the lecturer QR" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Start face/liveness check" }).count(), 0,
+    "Liveness must stay hidden until the server accepts a fresh QR");
+  assert.equal(calls.some((call) => call.path.startsWith("/devices/")), false,
+    "The student portal must not require or call device registration");
   await assertNoHorizontalOverflow(page);
+  assert.deepEqual(pageErrors, [], "Student dashboard should not raise browser exceptions");
+});
+
+test("student can enroll their face once using the browser camera and stays signed in", async () => {
+  const page = await newPage({ viewport: { width: 390, height: 844 } });
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+  const calls = await mockApi(page, authHandler("Student", async (call) => {
+    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: null });
+    if (call.path === "/academic/sections" && call.method === "GET") return json({ data: [] });
+    if (call.path === "/attendance/records/me" && call.method === "GET") return json({ data: [] });
+    if (call.path === "/attendance/sessions/available" && call.method === "GET") return json({ data: [] });
+    if (call.path === "/biometric/enroll" && call.method === "POST") {
+      return json({ success: true, message: "Biometric enrollment completed", data: { status: "ACTIVE" } }, 201);
+    }
+    return json({ data: [] });
+  }));
+
+  await page.goto(base + "/login");
+  await login(page, "Student");
+  await page.waitForURL(/\/student\/dashboard$/);
+  await page.getByRole("button", { name: "Use camera" }).click();
+  const video = page.locator(".biometric-enrollment-video");
+  await video.waitFor({ state: "visible" });
+  await page.waitForFunction(() => {
+    const element = document.querySelector(".biometric-enrollment-video");
+    return element && element.readyState >= 2 && element.videoWidth > 0 && element.videoHeight > 0;
+  }, { timeout: 10000 });
+  await page.getByRole("button", { name: "Capture face photo" }).click();
+  await page.getByText(/face-enrollment\.jpg selected/i).waitFor();
+  await page.getByRole("button", { name: "Save face enrollment" }).click();
+  await page.getByText("Face enrollment is active").waitFor();
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("token")), "browser-e2e-token",
+    "Completing face enrollment must not log the student out");
+  assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
+  assert.equal(calls.some((call) => call.path.startsWith("/devices/")), false);
+  assert.deepEqual(pageErrors, [], "Face enrollment should not raise browser exceptions");
+});
+
+test("student scans QR first, then completes active liveness and marks attendance", async () => {
+  const page = await newPage({ viewport: { width: 390, height: 844 } });
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "geolocation", {
+      configurable: true,
+      value: {
+        getCurrentPosition(success) {
+          success({ coords: { latitude: 15.4589, longitude: 75.0078, accuracy: 5 } });
+        },
+      },
+    });
+  });
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
+
+  const session = {
+    sessionId: "student-session-e2e",
+    courseCode: "CS101",
+    section: "A",
+    startedAt: new Date(Date.now() - 30000).toISOString(),
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  };
+  const section = {
+    _id: "student-section-1",
+    courseId: { _id: "course-1", code: "CS101", name: "Introduction to Computing" },
+    name: "A",
+    academicYear: "2026-2027",
+    room: { code: "B-204" },
+  };
+  const intentId = "b68a2f78-cb45-4c14-8315-fbe95d3ef681";
+  const assertionId = "e21a6012-9782-4ff2-9707-332e3d53a10f";
+  const activeChallengeId = "f5418db2-49d5-4689-a8fd-79ab87d6d6a1";
+  let attendanceMarked = false;
+  let validPreflightCount = 0;
+  const calls = await mockApi(page, authHandler("Student", async (call) => {
+    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: { status: "NONE" } });
+    if (call.path === "/academic/sections" && call.method === "GET") return json({ data: [section] });
+    if (call.path === "/attendance/records/me" && call.method === "GET") {
+      return json({ data: attendanceMarked ? [{
+        _id: "attendance-e2e-1",
+        courseCode: "CS101",
+        section: "A",
+        markedAt: new Date().toISOString(),
+        verification: { qr: true, device: false, biometric: true, proximity: false },
+      }] : [] });
+    }
+    if (call.path === "/attendance/sessions/available" && call.method === "GET") {
+      return json({ data: attendanceMarked ? [] : [session] });
+    }
+    if (call.path === "/biometric/enroll" && call.method === "POST") {
+      return json({ success: true, message: "Biometric enrollment completed", data: { status: "ACTIVE" } }, 201);
+    }
+    if (call.path === "/attendance/preflight" && call.method === "POST") {
+      if (call.body.token.startsWith("invalid-")) return json({ error: { message: "This QR is invalid or expired" } }, 401);
+      if (call.body.sessionId !== session.sessionId) return json({ error: { message: "QR belongs to a different session" } }, 409);
+      validPreflightCount += 1;
+      return json({
+        success: true,
+        message: "QR validated",
+        data: {
+          checkinIntentId: intentId,
+          sessionId: session.sessionId,
+          courseCode: session.courseCode,
+          section: session.section,
+          expiresAt: new Date(Date.now() + 600000).toISOString(),
+          expiresInMs: 600000,
+        },
+      });
+    }
+    if (call.path === "/biometric/challenge-active" && call.method === "POST") {
+      assert.equal(call.body.sessionId, session.sessionId);
+      return json({
+        success: true,
+        data: {
+          challengeId: activeChallengeId,
+          challenge: "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFG",
+          expiresInMs: 30000,
+          steps: [
+            { index: 0, step: "CENTER", instruction: "Face the camera straight on." },
+            { index: 1, step: "TURN_LEFT", instruction: "Turn your face toward the left." },
+            { index: 2, step: "TURN_RIGHT", instruction: "Turn your face toward the right." },
+          ],
+        },
+      });
+    }
+    if (call.path === "/biometric/verify-active" && call.method === "POST") {
+      return json({ success: true, data: {
+        assertionId, verified: true, livenessPassed: true, faceMatchPassed: true,
+        activeLivenessPassed: true, livenessMode: "ACTIVE_SEQUENCE_V1",
+      } });
+    }
+    if (call.path === "/attendance/verify" && call.method === "POST") {
+      attendanceMarked = true;
+      return json({ success: true, message: "Attendance marked successfully", attendanceId: "attendance-e2e-1" }, 201);
+    }
+    return json({ data: [] });
+  }));
+
+  await page.goto(base + "/login");
+  await login(page, "Student");
+  await page.waitForURL(/\/student\/dashboard$/);
+  await page.locator("#enrollment-image").setInputFiles({
+    name: "consenting-test-face.jpg",
+    mimeType: "image/jpeg",
+    buffer: Buffer.from("synthetic-test-image-bytes"),
+  });
+  await page.getByRole("button", { name: "Save face enrollment" }).click();
+  await page.getByText("Face enrollment is active").waitFor();
 
   await page.getByRole("button", { name: "Select session", exact: true }).click();
-  await page.getByRole("heading", { name: "Prepare your check-in" }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Start face/liveness check" }).isDisabled(), true);
-  assert.equal(await page.getByRole("button", { name: "Get current location" }).isDisabled(), true);
-  assert.equal(await page.getByRole("button", { name: "Open camera and scan" }).isDisabled(), true);
+  await page.getByRole("heading", { name: "Scan and validate the lecturer QR" }).waitFor();
+  await page.getByRole("button", { name: "Open camera and scan QR" }).click();
+  await page.getByRole("button", { name: "Stop camera" }).waitFor({ timeout: 10000 });
+  // Html5Qrcode owns its internal video/canvas visibility. Reaching the active
+  // Stop camera state proves start() resolved; don't assert implementation details.
+  await page.getByRole("button", { name: "Stop camera" }).click();
 
-  assert.ok(calls.some((call) => call.path === "/academic/sections" && call.method === "GET"));
-  assert.ok(calls.some((call) => call.path === "/attendance/sessions/available" && call.method === "GET"));
-  assert.ok(calls.some((call) => call.path === "/attendance/records/me" && call.method === "GET"));
-  assert.deepEqual(pageErrors, [], "Student attendance dashboard should not raise browser exceptions");
+  await page.locator(".student-qr-fallback summary").click();
+  await page.locator("#student-qr-token").fill("invalid-qr-token-long-enough-for-the-client");
+  await page.getByRole("button", { name: "Validate QR" }).click();
+  await page.getByRole("alert").filter({ hasText: /invalid|expired/i }).waitFor();
+  assert.match(page.url(), /\/student\/dashboard$/);
+  assert.equal(await page.evaluate(() => sessionStorage.getItem("token")), "browser-e2e-token",
+    "A domain 401 from QR validation must not end a valid login");
+
+  await page.locator("#student-qr-token").fill("server-signed-e2e-qr-token-1234567890");
+  await page.getByRole("button", { name: "Validate QR" }).click();
+  await page.getByRole("heading", { name: "Face match and liveness" }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Start face/liveness check" }).count(), 1);
+  assert.equal(calls.filter((call) => call.path === "/attendance/preflight").length, 2,
+    "The invalid QR must be rejected and the valid QR checked");
+  const preflightCall = calls.find((call) => call.path === "/attendance/preflight" && call.body.token.startsWith("server-signed-"));
+  assert.ok(preflightCall, "The server must accept the QR before liveness begins");
+  assert.equal(preflightCall.body.sessionId, session.sessionId);
+
+  await page.getByRole("button", { name: "Start face/liveness check" }).click();
+  await page.waitForFunction(() => {
+    const video = document.querySelector(".active-liveness-video");
+    return video && video.readyState >= 2 && video.videoWidth > 0 && video.videoHeight > 0;
+  }, { timeout: 10000 });
+  for (let step = 1; step <= 3; step += 1) {
+    const captureButton = page.getByRole("button", { name: "Capture frame " + step + " of 3" });
+    await captureButton.waitFor({ timeout: 10000 });
+    await captureButton.click();
+  }
+  await page.getByText("Face match and liveness passed for this check-in.").waitFor();
+  await page.getByRole("button", { name: "Get current location" }).click();
+  await page.getByRole("button", { name: "Mark attendance" }).waitFor();
+  await page.getByRole("button", { name: "Mark attendance" }).click();
+  await page.getByText("Attendance marked successfully").waitFor();
+  await page.getByRole("row").filter({ hasText: "CS101" }).last().waitFor();
+
+  const preflightIndex = calls.findIndex((call) => call.path === "/attendance/preflight" && call.body.token.startsWith("server-signed-"));
+  const challengeIndex = calls.findIndex((call) => call.path === "/biometric/challenge-active");
+  const verifyIndex = calls.findIndex((call) => call.path === "/biometric/verify-active");
+  const attendanceIndex = calls.findIndex((call) => call.path === "/attendance/verify");
+  assert.ok(preflightIndex >= 0 && challengeIndex > preflightIndex && verifyIndex > challengeIndex && attendanceIndex > verifyIndex,
+    "Expected sequence: valid QR preflight → active liveness challenge and verification → attendance submission");
+  const attendanceCall = calls.find((call) => call.path === "/attendance/verify");
+  assert.equal(attendanceCall.body.checkinIntentId, intentId);
+  assert.equal(attendanceCall.body.biometricAssertionId, assertionId);
+  assert.equal("deviceId" in attendanceCall.body, false);
+  assert.equal("deviceSignature" in attendanceCall.body, false);
+  assert.equal(calls.some((call) => call.path.startsWith("/devices/")), false,
+    "Attendance must never require device-registration endpoints");
+  assert.equal(validPreflightCount, 1);
+  await assertNoHorizontalOverflow(page);
+  assert.deepEqual(pageErrors, [], "Student check-in should not raise browser exceptions");
 });

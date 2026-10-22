@@ -1,4 +1,3 @@
-const { buildAttendanceSignaturePayload } = require("../../src/modules/Device/attendanceSignaturePayload");
 const { test } = require("node:test");
 const assert = require("node:assert/strict");
 const crypto = require("node:crypto");
@@ -79,10 +78,7 @@ if (!mongoUrl || !testRedisUrl) {
     const AuditEvent = require("../../src/models/AuditEvent.model");
     const Idempotency = require("../../src/models/Idempotency.model");
 
-    const DeviceCredential = require(
-        "../../src/models/DeviceCredential.model"
-    );
-
+    
     const BiometricEnrollment = require(
         "../../src/models/BiometricEnrollment.model"
     );
@@ -108,7 +104,6 @@ if (!mongoUrl || !testRedisUrl) {
             const suffix = runId.replace(/-/g, "").slice(0, 10);
             const emailSuffix = suffix.toLowerCase();
             const password = "Integration-Test-Password-123!";
-            const deviceId = `test-device-${suffix}`;
             const idempotencyKey = crypto.randomUUID();
 
             const room = {
@@ -195,10 +190,6 @@ if (!mongoUrl || !testRedisUrl) {
                 if (student) {
                     await Promise.all([
                         BiometricEnrollment.deleteMany({
-                            userId: student._id
-                        }),
-
-                        DeviceCredential.deleteMany({
                             userId: student._id
                         }),
 
@@ -407,57 +398,6 @@ if (!mongoUrl || !testRedisUrl) {
                 JSON.stringify(studentSessionAttempt.data)
             );
 
-            // 3. Register an Ed25519 device using the real challenge flow.
-            const keyPair = crypto.generateKeyPairSync("ed25519");
-
-            const publicKey = keyPair.publicKey.export({
-                type: "spki",
-                format: "pem"
-            });
-
-            const registrationChallenge = await api(
-                "/api/v1/devices/registration-challenge",
-                {
-                    method: "POST",
-                    token: studentToken,
-                    body: {}
-                }
-            );
-
-            assert.equal(
-                registrationChallenge.response.status,
-                200,
-                JSON.stringify(registrationChallenge.data)
-            );
-
-            const deviceChallenge = registrationChallenge.data.data;
-
-            const registrationSignature = crypto.sign(
-                null,
-                Buffer.from(deviceChallenge.challenge, "utf8"),
-                keyPair.privateKey
-            ).toString("base64url");
-
-            const deviceRegistration = await api(
-                "/api/v1/devices/register",
-                {
-                    method: "POST",
-                    token: studentToken,
-                    body: {
-                        challengeId: deviceChallenge.challengeId,
-                        deviceId,
-                        publicKey,
-                        signature: registrationSignature
-                    }
-                }
-            );
-
-            assert.equal(
-                deviceRegistration.response.status,
-                201,
-                JSON.stringify(deviceRegistration.data)
-            );
-
             // 4. Seed a biometric enrollment. The real provider is mocked,
             // so the test never uploads real biometric data externally.
             await BiometricEnrollment.create({
@@ -480,6 +420,21 @@ if (!mongoUrl || !testRedisUrl) {
                     providerUserId: String(userId)
                 })
             );
+
+            const centerLandmarks = [[20, 10], [120, 10], [70, 30], [40, 50], [100, 50]];
+            const leftLandmarks = [[20, 10], [120, 10], [50, 30], [40, 50], [100, 50]];
+            const rightLandmarks = [[20, 10], [120, 10], [90, 30], [40, 50], [100, 50]];
+            let activeStepNames = [];
+            let activeDetectionIndex = 0;
+            t.mock.method(biometricProvider, "detect", async () => {
+                const requestedStep = activeStepNames[activeDetectionIndex++] || "CENTER";
+                const landmarks = requestedStep === "TURN_LEFT"
+                    ? leftLandmarks
+                    : requestedStep === "TURN_RIGHT"
+                        ? rightLandmarks
+                        : centerLandmarks;
+                return { landmarks };
+            });
 
             // 5. Lecturer opens attendance; retrieve the live QR.
             const createSession = await api(
@@ -559,15 +514,31 @@ if (!mongoUrl || !testRedisUrl) {
             const token = qrResponse.data.data.token;
             assert.ok(token);
 
-            // 6. Obtain biometric challenge, then verify a valid test image.
-            const biometricChallengeResponse = await api(
-                "/api/v1/biometric/challenge",
+            // Validate the rotating QR before starting biometric verification.
+            const preflightResponse = await api(
+                "/api/v1/attendance/preflight",
                 {
                     method: "POST",
                     token: studentToken,
-                    body: {
-                        sessionId: publicSessionId
-                    }
+                    body: { token, sessionId: publicSessionId }
+                }
+            );
+            assert.equal(
+                preflightResponse.response.status,
+                200,
+                JSON.stringify(preflightResponse.data)
+            );
+            const checkinIntentId = preflightResponse.data.data.checkinIntentId;
+            assert.ok(checkinIntentId);
+
+            // 6. Request and complete the active three-frame face/liveness sequence
+            // only after the server has validated the fresh QR.
+            const biometricChallengeResponse = await api(
+                "/api/v1/biometric/challenge-active",
+                {
+                    method: "POST",
+                    token: studentToken,
+                    body: { sessionId: publicSessionId }
                 }
             );
 
@@ -576,38 +547,37 @@ if (!mongoUrl || !testRedisUrl) {
                 200,
                 JSON.stringify(biometricChallengeResponse.data)
             );
+            const biometricChallenge = biometricChallengeResponse.data.data;
+            assert.ok(biometricChallenge.challengeId);
+            assert.equal(biometricChallenge.steps.length, 3);
+            activeStepNames = biometricChallenge.steps.map((step) => step.step);
+            activeDetectionIndex = 0;
 
-            const biometricChallenge =
-                biometricChallengeResponse.data.data;
-
+            // The provider is deliberately mocked in CI; it still exercises the
+            // upload validator, challenge nonce, session binding and sequence policy.
             const imageBuffer = await sharp({
                 create: {
-                    width: 32,
-                    height: 32,
+                    width: 128,
+                    height: 128,
                     channels: 3,
                     background: { r: 60, g: 100, b: 150 }
                 }
             }).jpeg().toBuffer();
 
             const imageForm = new FormData();
-
             imageForm.append("sessionId", publicSessionId);
-
-            imageForm.append(
-                "challengeId",
-                biometricChallenge.challengeId
-            );
-
+            imageForm.append("challengeId", biometricChallenge.challengeId);
             imageForm.append("challenge", biometricChallenge.challenge);
-
-            imageForm.append(
-                "image",
-                new Blob([imageBuffer], { type: "image/jpeg" }),
-                "test-face.jpg"
-            );
+            for (let frameIndex = 0; frameIndex < 3; frameIndex += 1) {
+                imageForm.append(
+                    "frames",
+                    new Blob([imageBuffer], { type: "image/jpeg" }),
+                    `liveness-frame-${frameIndex + 1}.jpg`
+                );
+            }
 
             const biometricResponse = await api(
-                "/api/v1/biometric/verify",
+                "/api/v1/biometric/verify-active",
                 {
                     method: "POST",
                     token: studentToken,
@@ -620,35 +590,15 @@ if (!mongoUrl || !testRedisUrl) {
                 200,
                 JSON.stringify(biometricResponse.data)
             );
-
             const assertionId = biometricResponse.data.data.assertionId;
             assert.ok(assertionId);
+            assert.equal(biometricResponse.data.data.activeLivenessPassed, true);
+            assert.equal(biometricResponse.data.data.livenessMode, "ACTIVE_SEQUENCE_V1");
 
-            // 7. Sign the attendance operation with the registered device.
+            // Attendance no longer requires a registered browser/device key.
             const capturedAt = new Date().toISOString();
-            const deviceMessage = buildAttendanceSignaturePayload({
-                deviceId,
-                sessionId: publicSessionId,
-                token,
-                idempotencyKey,
-                biometricAssertionId: assertionId,
-                latitude: room.latitude,
-                longitude: room.longitude,
-                accuracyMeters: 5,
-                capturedAt
-            });
-
-            const deviceSignature = crypto.sign(
-                null,
-                Buffer.from(deviceMessage, "utf8"),
-                keyPair.privateKey
-            ).toString("base64url");
-
-
             const attendancePayload = {
-                token,
-                deviceId,
-                deviceSignature,
+                checkinIntentId,
                 biometricAssertionId: assertionId,
                 latitude: room.latitude,
                 longitude: room.longitude,
@@ -656,46 +606,24 @@ if (!mongoUrl || !testRedisUrl) {
                 capturedAt
             };
 
-            // Reject an out-of-geofence location before consuming the assertion.
+            // An out-of-geofence location is rejected before the assertion is consumed.
             const gpsAttackKey = crypto.randomUUID();
-
-            const gpsAttackSignature = crypto.sign(
-                null,
-                Buffer.from(buildAttendanceSignaturePayload({
-                    deviceId,
-                    sessionId: publicSessionId,
-                    token,
-                    idempotencyKey: gpsAttackKey,
-                    biometricAssertionId: attendancePayload.biometricAssertionId,
-                    latitude: attendancePayload.latitude,
-                    longitude: attendancePayload.longitude,
-                    accuracyMeters: attendancePayload.accuracyMeters,
-                    capturedAt: attendancePayload.capturedAt
-                }), "utf8"),
-                keyPair.privateKey
-            ).toString("base64url");
-
             const gpsAttackResponse = await api(
                 "/api/v1/attendance/verify",
                 {
                     method: "POST",
                     token: studentToken,
-                    headers: {
-                        "Idempotency-Key": gpsAttackKey
-                    },
+                    headers: { "Idempotency-Key": gpsAttackKey },
                     body: {
                         ...attendancePayload,
-                        deviceSignature: gpsAttackSignature,
                         latitude: 0,
-                        longitude: 0,
-                        capturedAt
+                        longitude: 0
                     }
                 }
             );
-
             assert.equal(
                 gpsAttackResponse.response.status,
-                401,
+                403,
                 JSON.stringify(gpsAttackResponse.data)
             );
 
@@ -820,22 +748,6 @@ if (!mongoUrl || !testRedisUrl) {
             // A new operation key cannot reuse the already-consumed assertion.
             const secondOperationKey = crypto.randomUUID();
 
-            const secondDeviceSignature = crypto.sign(
-                null,
-                Buffer.from(buildAttendanceSignaturePayload({
-                    deviceId,
-                    sessionId: publicSessionId,
-                    token,
-                    idempotencyKey: secondOperationKey,
-                    biometricAssertionId: attendancePayload.biometricAssertionId,
-                    latitude: attendancePayload.latitude,
-                    longitude: attendancePayload.longitude,
-                    accuracyMeters: attendancePayload.accuracyMeters,
-                    capturedAt: attendancePayload.capturedAt
-                }), "utf8"),
-                keyPair.privateKey
-            ).toString("base64url");
-
             const assertionReplay = await api(
                 "/api/v1/attendance/verify",
                 {
@@ -844,10 +756,7 @@ if (!mongoUrl || !testRedisUrl) {
                     headers: {
                         "Idempotency-Key": secondOperationKey
                     },
-                    body: {
-                        ...attendancePayload,
-                        deviceSignature: secondDeviceSignature
-                    }
+                    body: attendancePayload
                 }
             );
 
@@ -945,33 +854,7 @@ if (!mongoUrl || !testRedisUrl) {
                 1
             );
 
-            // Students can revoke their own registered device.
-            const revokeResponse = await api(
-                "/api/v1/devices/me",
-                {
-                    method: "DELETE",
-                    token: studentToken
-                }
-            );
 
-            assert.equal(
-                revokeResponse.response.status,
-                200,
-                JSON.stringify(revokeResponse.data)
-            );
-
-            assert.equal(
-                revokeResponse.data.data.status,
-                "REVOKED"
-            );
-
-            assert.equal(
-                await DeviceCredential.countDocuments({
-                    userId: student._id,
-                    status: "ACTIVE"
-                }),
-                0
-            );
         }
     );
 }

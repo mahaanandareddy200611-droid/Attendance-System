@@ -594,6 +594,12 @@ exports.validateAssertion = async ({ assertionId, userId, sessionId }) => {
     if (assertion.livenessPassed !== true || assertion.faceMatchPassed !== true) {
         throw new AppError("Biometric verification is incomplete", 401);
     }
+    if (
+        assertion.activeLivenessPassed !== true ||
+        assertion.livenessMode !== "ACTIVE_SEQUENCE_V1"
+    ) {
+        throw new AppError("A successful active face/liveness sequence is required for attendance", 401);
+    }
 
     return assertion;
 };
@@ -663,6 +669,15 @@ exports.reserveAssertion = async ({
     ) {
         throw new AppError(
             "Biometric verification is incomplete",
+            401
+        );
+    }
+    if (
+        assertion.activeLivenessPassed !== true ||
+        assertion.livenessMode !== "ACTIVE_SEQUENCE_V1"
+    ) {
+        throw new AppError(
+            "A successful active face/liveness sequence is required for attendance",
             401
         );
     }

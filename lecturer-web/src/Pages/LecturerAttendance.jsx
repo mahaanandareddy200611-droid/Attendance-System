@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import QRCode from "qrcode";
-import { Link, useParams, useNavigate } from "react-router-dom";
+import { Link, useParams, useNavigate, useLocation } from "react-router-dom";
 import { getSections } from "../services/academic.service";
 import {
   endAttendanceSession,
@@ -15,45 +15,63 @@ import WorkspaceHeader from "../components/WorkspaceHeader";
 function LecturerAttendance() {
   const { sessionId: routeSessionId } = useParams();
   const navigate = useNavigate();
+  const location = useLocation();
+  const routeSession = location.state?.activeSession;
+  const initialSession = routeSessionId && routeSession?.sessionId === routeSessionId
+    ? routeSession
+    : null;
   const [sectionId, setSectionId] = useState("");
   const [sections, setSections] = useState([]);
   const [activeSessions, setActiveSessions] = useState([]);
-  const [session, setSession] = useState(null);
+  const [session, setSession] = useState(initialSession);
   const [qrImage, setQrImage] = useState("");
   const [loading, setLoading] = useState(false);
-  const [message, setMessage] = useState("");
+  const [message, setMessage] = useState(() => location.state?.notice || "");
   const [pageLoading, setPageLoading] = useState(true);
   const [qrStatus, setQrStatus] = useState("loading");
   const [qrExpiresAt, setQrExpiresAt] = useState(null);
   const [qrError, setQrError] = useState("");
+  const [qrRetryKey, setQrRetryKey] = useState(0);
+  const [dataRetryKey, setDataRetryKey] = useState(0);
 
   useEffect(() => {
     let active = true;
-    Promise.all([
+    Promise.allSettled([
       getSections({ limit: 100 }),
       getAttendanceSessions({ status: "ACTIVE", limit: 100 }),
     ])
-      .then(([sectionResponse, sessionResponse]) => {
+      .then(([sectionResult, sessionResult]) => {
         if (!active) return;
-        setSections(sectionResponse.data.data || []);
-        const sessions = sessionResponse.data.data || [];
-        setActiveSessions(sessions);
-        if (routeSessionId) {
-          const existing = sessions.find(
-            (item) => item.sessionId === routeSessionId,
-          );
-          if (existing) setSession(existing);
-          else
-            setMessage(
-              "This session is no longer active or is not assigned to your account.",
-            );
+        const failures = [];
+
+        if (sectionResult.status === "fulfilled") {
+          setSections(sectionResult.value.data?.data || []);
+        } else {
+          failures.push("assigned sections");
         }
-      })
-      .catch((error) => {
-        if (active)
+
+        if (sessionResult.status === "fulfilled") {
+          const sessions = sessionResult.value.data?.data || [];
+          setActiveSessions(sessions);
+          if (routeSessionId) {
+            const existing = sessions.find((item) => item.sessionId === routeSessionId);
+            if (existing) {
+              setSession(existing);
+            } else if (routeSession?.sessionId !== routeSessionId) {
+              setMessage(
+                "This session is no longer active or is not assigned to your account. Return to Attendance to select an active session.",
+              );
+            }
+          }
+        } else {
+          failures.push("active sessions");
+        }
+
+        if (failures.length) {
           setMessage(
-            getApiErrorMessage(error, "Could not load your assigned sessions."),
+            `Could not load ${failures.join(" and ")}. You can retry below; an already-created session can still request its QR.`,
           );
+        }
       })
       .finally(() => {
         if (active) setPageLoading(false);
@@ -61,7 +79,7 @@ function LecturerAttendance() {
     return () => {
       active = false;
     };
-  }, [routeSessionId]);
+  }, [routeSessionId, routeSession, dataRetryKey]);
 
   useEffect(() => {
     if (!session?.sessionId) return undefined;
@@ -97,9 +115,14 @@ function LecturerAttendance() {
         setQrImage("");
         setQrExpiresAt(null);
         setQrError(getApiErrorMessage(error, "Could not refresh the attendance QR."));
-        const terminal = [401, 403, 404, 409].includes(error?.response?.status);
+        const status = error?.response?.status;
+        const terminal = [400, 401, 403, 404, 409, 410, 422].includes(status);
         setQrStatus(terminal ? "unavailable" : "retrying");
-        if (!terminal) timer = window.setTimeout(refresh, 2000);
+        const retryAfterSeconds = Number(error?.response?.headers?.["retry-after"]);
+        const retryDelay = status === 429 && Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
+          ? Math.min(15000, Math.max(2000, retryAfterSeconds * 1000))
+          : 2000;
+        if (!terminal) timer = window.setTimeout(refresh, retryDelay);
       }
     };
 
@@ -108,7 +131,7 @@ function LecturerAttendance() {
       stopped = true;
       window.clearTimeout(timer);
     };
-  }, [session?.sessionId]);
+  }, [session?.sessionId, qrRetryKey]);
 
   const startSession = async (event) => {
     event.preventDefault();
@@ -121,14 +144,21 @@ function LecturerAttendance() {
     setQrStatus("loading");
     try {
       const response = await startAttendanceSession(sectionId.trim());
-      setSession(response.data.data);
-      setActiveSessions((current) => [response.data.data, ...current]);
-      navigate(`/lecturer/sessions/${response.data.data.sessionId}/live`, {
+      const createdSession = response.data?.data;
+      if (!createdSession?.sessionId) {
+        throw new Error("The server did not return a session ID. Refresh the page and check active sessions before trying again.");
+      }
+      setSession(createdSession);
+      setActiveSessions((current) => [
+        createdSession,
+        ...current.filter((item) => item.sessionId !== createdSession.sessionId),
+      ]);
+      const notice = "Attendance session started. The page is requesting the current server-issued QR.";
+      setMessage(notice);
+      navigate(`/lecturer/sessions/${createdSession.sessionId}/live`, {
         replace: true,
+        state: { activeSession: createdSession, notice },
       });
-      setMessage(
-        "Attendance session started. Students can scan the rotating QR.",
-      );
     } catch (error) {
       setMessage(
         getApiErrorMessage(
@@ -139,6 +169,14 @@ function LecturerAttendance() {
     } finally {
       setLoading(false);
     }
+  };
+
+  const retryQr = () => {
+    setQrImage("");
+    setQrExpiresAt(null);
+    setQrError("");
+    setQrStatus("loading");
+    setQrRetryKey((value) => value + 1);
   };
 
   const endSession = async () => {
@@ -185,7 +223,7 @@ function LecturerAttendance() {
           </div>
         )}
         {pageLoading && <p className="academic-empty" role="status">Loading your assigned sections and sessions…</p>}
-        {!session ? (
+        {!session && !routeSessionId ? (
           <form
             className="academic-card academic-lookup"
             onSubmit={startSession}
@@ -232,6 +270,16 @@ function LecturerAttendance() {
               </div>
             )}
             {qrError && <p className="academic-notice error" role="alert">{qrError}</p>}
+            {!qrImage && qrStatus === "unavailable" && (
+              <div className="lecturer-qr-recovery" role="group" aria-label="QR recovery actions">
+                <button className="academic-button" type="button" onClick={retryQr} disabled={loading}>
+                  Retry QR request
+                </button>
+                <Link className="academic-button secondary" to="/lecturer/sessions/new">
+                  Return to attendance
+                </Link>
+              </div>
+            )}
             {qrExpiresAt && Number.isFinite(new Date(qrExpiresAt).getTime()) && (
               <p className="academic-footnote">Current challenge expires {new Date(qrExpiresAt).toLocaleTimeString()}.</p>
             )}
@@ -257,8 +305,66 @@ function LecturerAttendance() {
             </button>
           </section>
         )}
-        {!session && !pageLoading && !sections.length && (
-          <p className="academic-empty">No assigned active sections were returned by the server. Ask an administrator to verify your section assignment.</p>
+        {!session && !pageLoading && !sections.length && !message && (
+          <div className="academic-card">
+            <p className="academic-empty">
+              No assigned active sections were returned. If this was a temporary load failure, retry; otherwise ask an administrator to verify your section assignment.
+            </p>
+            <button
+              className="academic-button secondary"
+              type="button"
+              onClick={() => {
+                setMessage("");
+                setPageLoading(true);
+                setDataRetryKey((value) => value + 1);
+              }}
+              disabled={loading}
+            >
+              Retry loading sections
+            </button>
+          </div>
+        )}
+        {!session && routeSessionId && !pageLoading && (
+          <section className="academic-card" aria-live="polite">
+            <h2>Recover live attendance session</h2>
+            <p className="academic-empty">
+              {message || "The active session details could not be restored yet. Retry loading sessions before starting another one."}
+            </p>
+            <div className="lecturer-qr-recovery">
+              <button
+                className="academic-button"
+                type="button"
+                onClick={() => {
+                  setMessage("");
+                  setPageLoading(true);
+                  setDataRetryKey((value) => value + 1);
+                }}
+                disabled={loading}
+              >
+                Retry loading session
+              </button>
+              <Link className="academic-button secondary" to="/lecturer/sessions/new">
+                Return to attendance
+              </Link>
+            </div>
+          </section>
+        )}
+        {!session && !routeSessionId && !pageLoading && message.startsWith("Could not load ") && (
+          <section className="academic-card" aria-live="polite">
+            <p className="academic-empty">The attendance setup could not load all required lists.</p>
+            <button
+              className="academic-button secondary"
+              type="button"
+              onClick={() => {
+                setMessage("");
+                setPageLoading(true);
+                setDataRetryKey((value) => value + 1);
+              }}
+              disabled={loading}
+            >
+              Retry loading attendance setup
+            </button>
+          </section>
         )}
         {!session && activeSessions.length > 0 && (
           <section className="academic-card">

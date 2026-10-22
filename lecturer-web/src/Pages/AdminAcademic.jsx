@@ -48,63 +48,62 @@ function AdminAcademic() {
   const [lecturers, setLecturers] = useState([]);
 
   const loadAcademicOptions = async () => {
-    try {
-      const [
-        courseResponse,
-        sectionResponse,
-        studentResponse,
-        lecturerResponse,
-      ] = await Promise.all([
-        getCourses({ limit: 100 }),
-        getSections({ limit: 100 }),
-        searchAcademicUsers({ role: "Student", limit: 100 }),
-        searchAcademicUsers({ role: "Lecturer", limit: 100 }),
-      ]);
-      setCourses(courseResponse.data.data || []);
-      setSections(sectionResponse.data.data || []);
-      setStudents(studentResponse.data.data || []);
-      setLecturers(lecturerResponse.data.data || []);
-    } catch (error) {
+    const results = await Promise.allSettled([
+      getCourses({ limit: 100 }),
+      getSections({ limit: 100 }),
+      searchAcademicUsers({ role: "Student", limit: 100 }),
+      searchAcademicUsers({ role: "Lecturer", limit: 100 }),
+    ]);
+    const failures = [];
+    const apply = (index, label, setter) => {
+      const result = results[index];
+      if (result.status === "fulfilled") {
+        setter(result.value.data?.data || []);
+      } else {
+        failures.push(label);
+      }
+    };
+    apply(0, "courses", setCourses);
+    apply(1, "sections", setSections);
+    apply(2, "students", setStudents);
+    apply(3, "lecturers", setLecturers);
+    if (failures.length) {
       setNotice({
         type: "error",
-        text:
-          error.response?.data?.error?.message ||
-          "Could not load academic records.",
+        text: `Some Admin data could not load: ${failures.join(", ")}. Other lists are still available; retry the failed action.`,
       });
     }
   };
 
   useEffect(() => {
     let active = true;
-    Promise.all([
+    Promise.allSettled([
       getCourses({ limit: 100 }),
       getSections({ limit: 100 }),
       searchAcademicUsers({ role: "Student", limit: 100 }),
       searchAcademicUsers({ role: "Lecturer", limit: 100 }),
-    ])
-      .then(
-        ([
-          courseResponse,
-          sectionResponse,
-          studentResponse,
-          lecturerResponse,
-        ]) => {
-          if (!active) return;
-          setCourses(courseResponse.data.data || []);
-          setSections(sectionResponse.data.data || []);
-          setStudents(studentResponse.data.data || []);
-          setLecturers(lecturerResponse.data.data || []);
-        },
-      )
-      .catch((error) => {
-        if (active)
-          setNotice({
-            type: "error",
-            text:
-              error.response?.data?.error?.message ||
-              "Could not load academic records.",
-          });
-      });
+    ]).then((results) => {
+      if (!active) return;
+      const failures = [];
+      const apply = (index, label, setter) => {
+        const result = results[index];
+        if (result.status === "fulfilled") {
+          setter(result.value.data?.data || []);
+        } else {
+          failures.push(label);
+        }
+      };
+      apply(0, "courses", setCourses);
+      apply(1, "sections", setSections);
+      apply(2, "students", setStudents);
+      apply(3, "lecturers", setLecturers);
+      if (failures.length) {
+        setNotice({
+          type: "error",
+          text: `Some Admin data could not load: ${failures.join(", ")}. Retry after checking the connection; other loaded data remains available.`,
+        });
+      }
+    });
     return () => {
       active = false;
     };
