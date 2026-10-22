@@ -146,10 +146,21 @@ exports.endSession =
     });
 
 
+exports.validateQr = asyncHandler(async (req, res) => {
+    const result = await attendanceService.validateQr({
+        studentId: req.user.id,
+        token: req.body.token,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+    });
+    return res.status(200).json({ success: true, data: result, requestId: req.id });
+});
+
 exports.verifyAttendance =
     asyncHandler(async (req, res) => {
 
         const {
+    validationId,
     token,
     deviceId,
     deviceSignature,
@@ -167,6 +178,7 @@ exports.verifyAttendance =
         await attendanceService.verifyAttendance({
     studentId: req.user.id,
 
+    validationId,
     token,
 
     deviceId,

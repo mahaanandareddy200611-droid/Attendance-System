@@ -1,6 +1,8 @@
 const crypto =
     require("crypto");
 
+const AppError = require("../../utils/AppError");
+
 const {
     redisClient
 } = require("../../config/redis");
@@ -369,3 +371,47 @@ exports.releaseQrUse =
         );
     };
 
+
+
+/*
+ * Keeps a server-validated scan valid while the front-camera face/liveness
+ * check runs. This ticket is authenticated-user and session bound.
+ */
+const QR_VALIDATION_TTL_MS =
+    Number(process.env.ATTENDANCE_QR_VALIDATION_TTL_MS) || 180000;
+const qrValidationKey = (validationId) => "attendance:qr-validation:" + validationId;
+
+exports.createQrValidationTicket = async ({
+    studentId, sessionId, sessionRecordId, token, slot, nonce
+}) => {
+    const validationId = crypto.randomUUID();
+    const ticket = {
+        studentId: String(studentId),
+        sessionId: String(sessionId),
+        sessionRecordId: String(sessionRecordId),
+        token,
+        slot,
+        nonce,
+        createdAt: Date.now()
+    };
+    const saved = await redisClient.set(
+        qrValidationKey(validationId),
+        JSON.stringify(ticket),
+        { NX: true, PX: QR_VALIDATION_TTL_MS }
+    );
+    if (saved !== "OK") {
+        throw new AppError("Could not create QR validation ticket. Scan the QR again.", 503);
+    }
+    return { validationId, expiresInMs: QR_VALIDATION_TTL_MS };
+};
+
+exports.getQrValidationTicket = async ({ validationId }) => {
+    if (!validationId) return null;
+    const raw = await redisClient.get(qrValidationKey(validationId));
+    if (!raw) return null;
+    try {
+        return JSON.parse(raw);
+    } catch {
+        throw new AppError("QR validation ticket is invalid. Scan the QR again.", 500);
+    }
+};

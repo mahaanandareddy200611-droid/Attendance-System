@@ -532,55 +532,44 @@ test("Admin browser forms create a course, section, enrollment and Lecturer acco
   assert.ok(calls.some((c) => c.method === "POST" && c.path === "/auth/lecturers" && c.body.email === "newlecturer@example.test"));
 });
 
-test("student browser portal loads assigned classes, live check-ins and history", async () => {
+test("student browser validates QR before face verification and does not require device registration", async () => {
   const page = await newPage({ viewport: { width: 390, height: 844 } });
   const pageErrors = [];
   page.on("pageerror", (error) => pageErrors.push(error.message));
-
-  const section = {
-    _id: "student-section-1",
-    courseId: { _id: "course-1", code: "CS101", name: "Introduction to Computing" },
-    name: "A",
-    academicYear: "2026-2027",
-    room: { code: "B-204" },
-  };
-  const session = {
-    sessionId: "student-session-e2e",
-    courseCode: "CS101",
-    section: "A",
-    startedAt: new Date(Date.now() - 30000).toISOString(),
-    expiresAt: new Date(Date.now() + 60000).toISOString(),
-  };
-
+  const section = { _id: "student-section-1", courseId: { _id: "course-1", code: "CS101", name: "Introduction to Computing" }, name: "A", academicYear: "2026-2027", room: { code: "B-204" } };
+  const session = { sessionId: "student-session-e2e", courseCode: "CS101", section: "A", startedAt: new Date(Date.now() - 30000).toISOString(), expiresAt: new Date(Date.now() + 60000).toISOString() };
+  const validationId = "3dc3af1a-9cc7-44d4-8cb2-7757f75d7e25";
   const handler = authHandler("Student", async (call) => {
-    if (call.path === "/devices/me" && call.method === "GET") return json({ data: null });
-    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: { status: "NONE" } });
+    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: { status: "ACTIVE" } });
     if (call.path === "/academic/sections" && call.method === "GET") return json({ data: [section] });
     if (call.path === "/attendance/records/me" && call.method === "GET") return json({ data: [] });
     if (call.path === "/attendance/sessions/available" && call.method === "GET") return json({ data: [session] });
+    if (call.path === "/attendance/validate-qr" && call.method === "POST") return json({ data: { validationId, sessionId: session.sessionId, courseCode: "CS101", section: "A", expiresInMs: 180000 } });
+    if (call.path === "/biometric/challenge-active" && call.method === "POST") return json({ error: { message: "Active biometric challenge expired or invalid" } }, 401);
     return json({ data: [] });
   });
   const calls = await mockApi(page, handler);
-
   await page.goto(base + "/login");
   await login(page, "Student");
   await page.waitForURL(/\/student\/dashboard$/);
-  await page.getByRole("heading", { name: "Scan QR to check in" }).waitFor();
-  await page.getByText("CS101 · Section A", { exact: true }).first().waitFor();
-  await page.getByText("Introduction to Computing").waitFor();
+  await page.getByRole("heading", { name: /Scan QR, verify your face, check in/i }).waitFor();
   await page.getByRole("heading", { name: "Available check-ins" }).waitFor();
   await page.getByRole("heading", { name: "Recent attendance" }).waitFor();
-  await page.getByText("No attendance records yet.").waitFor();
-  await assertNoHorizontalOverflow(page);
+  assert.equal(await page.getByRole("button", { name: "Open camera and scan" }).isDisabled(), false);
+  assert.equal(await page.getByRole("button", { name: "Start face/liveness check" }).count(), 0);
+  assert.equal(await page.getByText(/Device registration/i).count(), 0);
+  assert.equal(calls.some((call) => call.path.startsWith("/devices/")), false);
 
-  await page.getByRole("button", { name: "Select session", exact: true }).click();
-  await page.getByRole("heading", { name: "Prepare your check-in" }).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Start face/liveness check" }).isDisabled(), true);
-  assert.equal(await page.getByRole("button", { name: "Get current location" }).isDisabled(), true);
-  assert.equal(await page.getByRole("button", { name: "Open camera and scan" }).isDisabled(), true);
+  await page.getByText("Enter QR token manually (camera fallback)", { exact: true }).click();
+  await page.getByLabel("QR token").fill("a-valid-server-issued-qr-token");
+  await page.getByRole("button", { name: "Validate QR", exact: true }).click();
+  await page.getByRole("button", { name: "Start face/liveness check" }).waitFor();
+  await page.getByText(/QR verified by the server/i).waitFor();
 
-  assert.ok(calls.some((call) => call.path === "/academic/sections" && call.method === "GET"));
-  assert.ok(calls.some((call) => call.path === "/attendance/sessions/available" && call.method === "GET"));
-  assert.ok(calls.some((call) => call.path === "/attendance/records/me" && call.method === "GET"));
+  await page.getByRole("button", { name: "Start face/liveness check" }).click();
+  await page.getByText(/Active biometric challenge expired or invalid/i).waitFor();
+  assert.match(page.url(), /\/student\/dashboard$/);
+  assert.equal(await page.getByRole("heading", { name: /Scan QR, verify your face, check in/i }).count(), 1);
+  assert.ok(calls.some((call) => call.path === "/attendance/validate-qr" && call.method === "POST" && call.body.token === "a-valid-server-issued-qr-token"));
   assert.deepEqual(pageErrors, [], "Student attendance dashboard should not raise browser exceptions");
 });

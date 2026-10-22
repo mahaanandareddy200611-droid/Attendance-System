@@ -12,6 +12,7 @@ const {
     getQr,
     endSession,
     verifyAttendance,
+    validateQr,
     listSessions,
     listAvailableStudentSessions,
     listSessionRecords,
@@ -22,7 +23,11 @@ const {
 const { createRateLimiter } = require("../../middlewares/rateLimiter");
 const validate = require("../../utils/validate");
 const validateIdempotencyKey = require("../../middlewares/validateIdempotencyKey");
-const { createSession: createSessionSchema, verifyAttendance: verifyAttendanceSchema } = require("./AttendanceValidator");
+const {
+    createSession: createSessionSchema,
+    validateQr: validateQrSchema,
+    verifyAttendance: verifyAttendanceSchema
+} = require("./AttendanceValidator");
 
 const studentAttendanceRateLimit =
     createRateLimiter({
@@ -109,7 +114,18 @@ AttendanceRouter.post(
 STUDENT
 */
 
-// Scan/verify attendance
+// Validate the live QR first; only a valid active-session ticket unlocks face verification.
+AttendanceRouter.post(
+    "/validate-qr",
+    Auth,
+    authorize("Student"),
+    studentAttendanceRateLimit,
+    ipAttendanceRateLimit,
+    validate(validateQrSchema),
+    validateQr
+);
+
+// Complete attendance only after the active face/liveness check.
 AttendanceRouter.post(
     "/verify",
     Auth,

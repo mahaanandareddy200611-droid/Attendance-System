@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import "../Styles/Academic.css";
 import { useAuth } from "../auth/useAuth";
 import WorkspaceHeader from "../components/WorkspaceHeader";
 
