@@ -12,6 +12,7 @@ const {
     getQr,
     endSession,
     verifyAttendance,
+    prepareAttendanceCheckin,
     listSessions,
     listAvailableStudentSessions,
     listSessionRecords,
@@ -22,7 +23,7 @@ const {
 const { createRateLimiter } = require("../../middlewares/rateLimiter");
 const validate = require("../../utils/validate");
 const validateIdempotencyKey = require("../../middlewares/validateIdempotencyKey");
-const { createSession: createSessionSchema, verifyAttendance: verifyAttendanceSchema } = require("./AttendanceValidator");
+const { createSession: createSessionSchema, preflightQr: preflightQrSchema, verifyAttendance: verifyAttendanceSchema } = require("./AttendanceValidator");
 
 const studentAttendanceRateLimit =
     createRateLimiter({
@@ -108,6 +109,18 @@ AttendanceRouter.post(
 /*
 STUDENT
 */
+
+// Validate the QR while it is fresh. This issues a student-bound Redis
+// intent so face/liveness can finish after the rotating QR changes.
+AttendanceRouter.post(
+    "/preflight",
+    Auth,
+    authorize("Student"),
+    studentAttendanceRateLimit,
+    ipAttendanceRateLimit,
+    validate(preflightQrSchema),
+    prepareAttendanceCheckin
+);
 
 // Scan/verify attendance
 AttendanceRouter.post(

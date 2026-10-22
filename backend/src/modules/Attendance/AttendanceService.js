@@ -1,4 +1,5 @@
 const crypto = require("crypto");
+const { redisClient } = require("../../config/redis");
 
 const mongoose =
     require("mongoose");
@@ -15,10 +16,6 @@ const AttendanceSessionStudent =
 
 const AttendanceSession =
     require("../../models/AttendanceSession.model");
-
-const {
-    verifyAttendanceDevice
-} = require("../Device/DeviceService");
 
 const {
     createOrGetAttendanceRecord
@@ -53,6 +50,10 @@ const AuditEvent =
 
 const AppError =
     require("../../utils/AppError");
+
+const CHECKIN_INTENT_TTL_MS =
+    Number(process.env.ATTENDANCE_CHECKIN_INTENT_TTL_MS) || 10 * 60 * 1000;
+const checkinIntentKey = (intentId) => `attendance:checkin:intent:${intentId}`;
 
 const {
     generateAttendanceToken,
@@ -742,11 +743,91 @@ VERIFY ATTENDANCE
 ==================================================
 */
 
+exports.prepareAttendanceCheckin = async ({ studentId, token, expectedSessionId }) => {
+    if (!token || typeof token !== "string") {
+        throw new AppError("Scan the lecturer's current QR code first", 400);
+    }
+
+    const tokenResult = verifyAttendanceToken(token);
+    if (!tokenResult.valid) {
+        throw new AppError("This QR is invalid. Scan the current QR shown by your lecturer.", 401);
+    }
+
+    const { sid, slot, nonce } = tokenResult.payload;
+    if (expectedSessionId && String(sid) !== String(expectedSessionId)) {
+        throw new AppError("This QR belongs to a different session. Select the matching active class and scan again.", 409);
+    }
+    if (!isSlotFresh(slot)) {
+        throw new AppError("This QR has expired. Scan the lecturer's current QR again.", 401);
+    }
+
+    const session = await AttendanceSession.findOne({ sessionId: sid });
+    if (!session) {
+        throw new AppError("Attendance session not found", 404);
+    }
+    if (session.status !== "ACTIVE") {
+        throw new AppError("This attendance session has ended", 409);
+    }
+    if (Date.now() >= new Date(session.expiresAt).getTime()) {
+        await expireExpiredSessions({ sessionId: session.sessionId });
+        throw new AppError("Attendance session has expired", 409);
+    }
+
+    // A scanned string is not enough: confirm its nonce against Redis while
+    // the QR slot is fresh, before allowing the face/liveness interaction.
+    const challengeValid = await verifyChallenge({ sessionId: sid, slot, nonce });
+    if (!challengeValid) {
+        throw new AppError("This QR challenge has expired. Scan a fresh QR.", 401);
+    }
+
+    const rosterEntry = await AttendanceSessionStudent.findOne({
+        sessionId: session._id,
+        studentId
+    });
+
+    if (!rosterEntry) {
+        throw new AppError("You are not enrolled in this attendance session", 403);
+    }
+    if (rosterEntry.status === "PRESENT") {
+        throw new AppError("Attendance has already been marked for this session", 409);
+    }
+    if (!["ELIGIBLE", "LATE"].includes(rosterEntry.status)) {
+        throw new AppError("You are not eligible to check in to this session", 403);
+    }
+
+    const checkinIntentId = crypto.randomUUID();
+    const expiresAt = new Date(Date.now() + CHECKIN_INTENT_TTL_MS);
+    const intent = {
+        studentId: String(studentId),
+        sessionId: session.sessionId,
+        token,
+        slot,
+        nonce,
+        createdAt: Date.now()
+    };
+    const saved = await redisClient.set(
+        checkinIntentKey(checkinIntentId),
+        JSON.stringify(intent),
+        { NX: true, PX: CHECKIN_INTENT_TTL_MS }
+    );
+    if (saved !== "OK") {
+        throw new AppError("Could not prepare check-in. Scan the QR again.", 503);
+    }
+
+    return {
+        checkinIntentId,
+        sessionId: session.sessionId,
+        courseCode: session.courseCode,
+        section: session.section,
+        expiresAt,
+        expiresInMs: CHECKIN_INTENT_TTL_MS
+    };
+};
+
+
 exports.verifyAttendance = async ({
     studentId,
-    token,
-    deviceId,
-    deviceSignature,
+    checkinIntentId,
     biometricAssertionId,
     latitude,
     longitude,
@@ -756,85 +837,44 @@ exports.verifyAttendance = async ({
     ipAddress,
     userAgent
 }) => {
-
-    /*
-    --------------------------------------------------
-    1. VALIDATE REQUIRED INPUT
-    --------------------------------------------------
-    */
-
-    if (!token) {
-        throw new AppError(
-            "Attendance token is required",
-            400
-        );
-    }
-
     if (!idempotencyKey) {
-        throw new AppError(
-            "Idempotency-Key header is required",
-            400
-        );
+        throw new AppError("Idempotency-Key header is required", 400);
+    }
+    if (!checkinIntentId || typeof checkinIntentId !== "string") {
+        throw new AppError("Scan and validate the lecturer's QR before checking in", 400);
     }
 
-
-    /*
-    --------------------------------------------------
-    2. VERIFY QR SIGNATURE
-    --------------------------------------------------
-    */
-
-    const tokenResult =
-        verifyAttendanceToken(token);
-
-    if (!tokenResult.valid) {
-
-        await AttendanceAttempt.create({
-            studentId,
-
-            result:
-                "INVALID_TOKEN",
-
-            ipAddress,
-
-            userAgent
-        });
-
-        throw new AppError(
-            "Invalid attendance token",
-            401
-        );
+    const rawIntent = await redisClient.get(checkinIntentKey(checkinIntentId));
+    if (!rawIntent) {
+        throw new AppError("This QR check-in expired. Scan a fresh QR and try again.", 410);
     }
 
-    const {
-        sid,
-        slot
-    } = tokenResult.payload;
+    let intent;
+    try {
+        intent = JSON.parse(rawIntent);
+    } catch {
+        throw new AppError("This QR check-in is invalid. Scan the QR again.", 401);
+    }
+    if (String(intent.studentId) !== String(studentId)) {
+        throw new AppError("This QR check-in belongs to another student", 403);
+    }
 
+    const token = intent.token;
+    const tokenResult = verifyAttendanceToken(token);
+    if (
+        !tokenResult.valid ||
+        tokenResult.payload.sid !== intent.sessionId ||
+        tokenResult.payload.slot !== intent.slot ||
+        tokenResult.payload.nonce !== intent.nonce
+    ) {
+        throw new AppError("The validated QR could not be verified. Scan it again.", 401);
+    }
 
-
-    /*
-    --------------------------------------------------
-    4. FIND SESSION
-    --------------------------------------------------
-    */
-
-    const session =
-        await AttendanceSession.findOne({
-            sessionId: sid
-        });
-
+    const { sid, slot } = tokenResult.payload;
+    const session = await AttendanceSession.findOne({ sessionId: sid });
     if (!session) {
-
-        throw new AppError(
-            "Attendance session not found",
-            404
-        );
+        throw new AppError("Attendance session not found", 404);
     }
-
-
-
-
 
     // Build a fingerprint of the complete attendance request.
     const idempotencyRequest = {
@@ -842,8 +882,8 @@ exports.verifyAttendance = async ({
         studentId,
         sessionId: session._id,
         token,
-        deviceId,
-        deviceSignature,
+        deviceId: null,
+        deviceSignature: null,
         biometricAssertionId,
         latitude,
         longitude,
@@ -865,15 +905,9 @@ exports.verifyAttendance = async ({
         };
     }
 
-    // Only new or reclaimable requests need a fresh QR slot.
-    if (!isSlotFresh(slot)) {
-        throw new AppError(
-            "Attendance QR has expired",
-            401
-        );
-    }
-
-
+    // QR signature, slot freshness, and Redis nonce were verified when the
+    // short-lived intent was created. Face/liveness is allowed to outlast a QR
+    // refresh interval, but the intent itself expires in Redis.
 
     /*
     --------------------------------------------------
@@ -899,29 +933,9 @@ exports.verifyAttendance = async ({
     }
 
 
-    if (!deviceId || !deviceSignature) {
-        throw new AppError("Registered device proof is required", 401);
-    }
-
-    /*
-    --------------------------------------------------
-    DEVICE CRYPTOGRAPHIC VERIFICATION
-    Verify the signed request before trusting GPS inputs.
-    --------------------------------------------------
-    */
-    await verifyAttendanceDevice({
-        userId: studentId,
-        deviceId,
-        signature: deviceSignature,
-        sessionId: session.sessionId,
-        token,
-        idempotencyKey,
-        biometricAssertionId,
-        latitude,
-        longitude,
-        accuracyMeters,
-        capturedAt
-    });
+    // No browser-device registration or client-held signing key is required.
+    // Attendance remains bound to the authenticated student, server-validated
+    // QR intent, fresh biometric assertion, and server-checked classroom location.
     const studentLatitude = Number(latitude);
     const studentLongitude = Number(longitude);
     const studentAccuracy = Number(accuracyMeters);
@@ -985,26 +999,8 @@ exports.verifyAttendance = async ({
     --------------------------------------------------
     */
 
-    const challengeValid =
-        await verifyChallenge({
-            sessionId:
-                session.sessionId,
-
-            slot,
-
-            nonce:
-                tokenResult.payload.nonce
-        });
-
-
-    if (!challengeValid) {
-
-        throw new AppError(
-            "Attendance QR challenge is invalid or expired",
-            401
-        );
-    }
-
+    // The nonce was verified against Redis by /preflight while the QR was
+    // fresh. Do not re-require the rotating QR nonce after face/liveness.
 
     /*
     --------------------------------------------------
@@ -1354,7 +1350,7 @@ exports.verifyAttendance = async ({
 
                         verification: {
                             qr: true,
-                            device: true,
+                            device: false,
                             proximity: false,
                             biometric: true
                         },

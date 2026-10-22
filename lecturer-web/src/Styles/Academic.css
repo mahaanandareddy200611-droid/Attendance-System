@@ -321,7 +321,7 @@
   min-height: 40vh;
   display: grid;
   place-items: center;
-  color: #66738a;
+  color: #536176;
 }
 .student-privacy-note {
   margin-top: 14px;
@@ -1063,4 +1063,81 @@
   .academic-button {
     min-height: 44px;
   }
+}
+
+/* Student face enrollment: webcam capture and file fallback must both fit
+   inside the responsive setup card without shrinking the capture controls. */
+.student-biometric-form .student-setup-copy {
+  flex: 1 1 100%;
+}
+.biometric-enrollment-capture {
+  display: flex;
+  flex: 1 1 100%;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+.biometric-enrollment-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.biometric-enrollment-camera {
+  width: min(100%, 460px);
+}
+.biometric-enrollment-video {
+  display: block;
+  width: 100%;
+  max-height: 340px;
+  aspect-ratio: 4 / 3;
+  border-radius: 12px;
+  background: #111827;
+  object-fit: cover;
+}
+.biometric-enrollment-file {
+  flex: 1 1 100%;
+  margin-bottom: 0;
+}
+.biometric-enrollment-file input[type="file"] {
+  min-height: 40px;
+  padding: 8px;
+}
+.biometric-enrollment-capture .academic-notice {
+  overflow-wrap: anywhere;
+}
+
+
+/* Student QR fallback is intentionally secondary to live camera scanning. */
+.student-qr-fallback {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+  padding: 14px;
+  border: 1px solid var(--color-line);
+  border-radius: 12px;
+  background: #f8faff;
+}
+.student-qr-fallback summary {
+  color: var(--color-brand-dark);
+  font-weight: 650;
+  cursor: pointer;
+}
+.student-qr-fallback[open] summary {
+  margin-bottom: 2px;
+}
+.student-qr-fallback textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-line);
+  border-radius: 9px;
+  resize: vertical;
+}
+.student-qr-fallback .academic-footnote {
+  margin: 0;
+}
+.student-checkin-form {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
 }

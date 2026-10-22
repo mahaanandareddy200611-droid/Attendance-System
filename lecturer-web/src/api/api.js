@@ -36,15 +36,6 @@ api.interceptors.request.use(
   (error) => Promise.reject(error),
 );
 
-// These endpoints are accessible without an active login.
-const publicAuthPaths = [
-  "/auth/login",
-  "/auth/signup",
-  "/auth/forget-password",
-  "/auth/verify-reset-otp",
-  "/auth/reset-password",
-];
-
 // Handle expired or rejected authentication on protected requests.
 api.interceptors.response.use(
   (response) => response,
@@ -52,15 +43,17 @@ api.interceptors.response.use(
   (error) => {
     const requestUrl = String(error.config?.url || "");
 
-    const isPublicAuthRequest = publicAuthPaths.some((path) =>
-      requestUrl.endsWith(path),
-    );
+    // Only /auth/me is the canonical session validation endpoint. A 401 from
+    // QR preflight, biometric verification, or GPS check is an operation error,
+    // not proof that the user's login has expired. Do not unmount the workspace
+    // when those domain checks reject an otherwise authenticated request.
+    const isSessionValidation = requestUrl.split("?")[0].endsWith("/auth/me");
 
-    if (error.response?.status === 401 && !isPublicAuthRequest) {
+    if (error.response?.status === 401 && isSessionValidation) {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
       sessionStorage.removeItem("token");
-
+      sessionStorage.removeItem("user");
       window.dispatchEvent(new Event("attendance:unauthorized"));
     }
 

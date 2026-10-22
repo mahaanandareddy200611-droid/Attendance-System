@@ -42,3 +42,49 @@ test("lecturer API service paths stay aligned with their backend routers", () =>
   assert.ok(academicRouter.includes('"/courses"'));
   assert.ok(academicRouter.includes('"/sections"'));
 });
+
+test("Student web services align with QR preflight, biometric, attendance, and media routes", () => {
+  const attendanceService = frontend("src/services/attendance.service.js");
+  const attendanceRouter = read("backend/src/modules/Attendance/AttendanceRouter.js");
+  const attendanceValidator = read("backend/src/modules/Attendance/AttendanceValidator.js");
+  const application = read("backend/src/app.js");
+  const biometricService = frontend("src/services/biometric.service.js");
+  const biometricRouter = read("backend/src/modules/Biometric/BiometricRoutes.js");
+  const mediaService = frontend("src/services/media.service.js");
+  const mediaRouter = read("backend/src/modules/Media/MediaRoutes.js");
+
+  assert.ok(attendanceService.includes('api.get("/attendance/records/me"'));
+  assert.ok(attendanceService.includes('api.get("/attendance/sessions/available"'));
+  assert.ok(attendanceService.includes('api.post("/attendance/preflight"'));
+  assert.ok(attendanceService.includes('"/attendance/verify"'));
+  assert.ok(attendanceService.includes("checkinIntentId"));
+  assert.ok(attendanceRouter.includes('"/preflight"'));
+  assert.ok(attendanceRouter.includes('"/records/me"'));
+  assert.ok(attendanceRouter.includes('"/sessions/available"'));
+  assert.ok(attendanceRouter.includes('"/verify"'));
+  assert.ok(attendanceValidator.includes("checkinIntentId: Joi.string().uuid().required()"));
+  assert.ok(attendanceValidator.includes("exports.preflightQr"));
+  assert.equal(application.includes('app.use("/api/v1/devices"'), false,
+    "Device registration endpoints must not be mounted in the active backend API");
+
+  assert.ok(biometricService.includes('api.get("/biometric/me"'));
+  assert.ok(biometricService.includes('api.post("/biometric/enroll"'));
+  assert.ok(biometricService.includes('api.post("/biometric/challenge-active"'));
+  assert.ok(biometricService.includes('api.post("/biometric/verify-active"'));
+  assert.ok(biometricRouter.includes('"/enroll"'));
+  assert.ok(biometricRouter.includes('"/challenge-active"'));
+  assert.ok(biometricRouter.includes('"/verify-active"'));
+
+  assert.ok(mediaService.includes('api.post("/media/evidence"'));
+  assert.ok(mediaService.includes('/media/session/'));
+  assert.ok(mediaService.includes('/url'));
+  assert.ok(mediaRouter.includes('"/evidence"'));
+  assert.ok(mediaRouter.includes('"/session/:sessionId"'));
+  assert.ok(mediaRouter.includes('"/:assetId/url"'));
+});
+
+test("shared academic styles are loaded by the application entry point", () => {
+  const entry = frontend("src/main.jsx");
+  assert.ok(entry.includes('./Styles/Academic.css'),
+    "Role dashboards must not depend on another lazy page importing the shared stylesheet");
+});

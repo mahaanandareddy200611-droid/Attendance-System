@@ -28,12 +28,12 @@ function Signup() {
     setSubmitting(true);
     try {
       const data = {
-        name,
-        RollNumber: rollNumber,
-        email,
+        name: name.trim(),
+        RollNumber: rollNumber.trim().toUpperCase(),
+        email: email.trim().toLowerCase(),
         password,
         faceImage_url: "",
-        mobileNumber,
+        mobileNumber: mobileNumber.replace(/\D/g, ""),
       };
 
       await signupuser(data);
@@ -92,6 +92,7 @@ function Signup() {
               id="signup-roll"
               type="text"
               placeholder="24BCS101"
+              title="Format: 2 digits, B, 2 letters, 3 digits"
               pattern="[0-9]{2}B[A-Z]{2}[0-9]{3}"
               value={rollNumber}
               onChange={(e) => setRollNumber(e.target.value.toUpperCase())}
@@ -118,7 +119,9 @@ function Signup() {
             <input
               id="signup-mobile"
               type="tel"
-              placeholder="Enter your mobile number"
+              placeholder="10-digit mobile number"
+              pattern="[0-9]{10}"
+              maxLength={10}
               value={mobileNumber}
               onChange={(e) => setMobileNumber(e.target.value)}
               required

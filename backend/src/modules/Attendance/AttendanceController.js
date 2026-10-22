@@ -146,61 +146,52 @@ exports.endSession =
     });
 
 
+exports.prepareAttendanceCheckin = asyncHandler(async (req, res) => {
+    const result = await attendanceService.prepareAttendanceCheckin({
+        studentId: req.user.id,
+        token: req.body.token,
+        expectedSessionId: req.body.sessionId,
+        ipAddress: req.ip,
+        userAgent: req.get("User-Agent")
+    });
+    return res.status(200).json({
+        success: true,
+        message: "QR validated. Continue with face and liveness verification.",
+        data: result,
+        requestId: req.id
+    });
+});
+
+
 exports.verifyAttendance =
     asyncHandler(async (req, res) => {
-
         const {
-    token,
-    deviceId,
-    deviceSignature,
-    biometricAssertionId,
-    latitude,
-    longitude,
-    accuracyMeters,
-    capturedAt
-} = req.body;
+            checkinIntentId,
+            biometricAssertionId,
+            latitude,
+            longitude,
+            accuracyMeters,
+            capturedAt
+        } = req.body;
 
         const idempotencyKey =
             req.idempotencyKey || req.get("Idempotency-Key");
 
-    const result =
-        await attendanceService.verifyAttendance({
-    studentId: req.user.id,
-
-    token,
-
-    deviceId,
-
-    deviceSignature,
-
-    biometricAssertionId,
-
-    latitude,
-
-    longitude,
-
-    accuracyMeters,
-
-    capturedAt,
-
-    idempotencyKey,
-
-    ipAddress: req.ip,
-
-    userAgent:
-        req.get("User-Agent")
-});
+        const result = await attendanceService.verifyAttendance({
+            studentId: req.user.id,
+            checkinIntentId,
+            biometricAssertionId,
+            latitude,
+            longitude,
+            accuracyMeters,
+            capturedAt,
+            idempotencyKey,
+            ipAddress: req.ip,
+            userAgent: req.get("User-Agent")
+        });
 
         if (result.replayed) {
-
-            return res.status(
-                result.status
-            ).json(
-                result.body
-            );
+            return res.status(result.status).json(result.body);
         }
-
-        return res.status(201).json(
-            result
-        );
+        return res.status(201).json(result);
     });

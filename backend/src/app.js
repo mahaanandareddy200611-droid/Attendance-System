@@ -8,8 +8,6 @@ const { redisClient } = require("./config/redis");
 const { evaluateReadiness } = require("./config/readiness");
 const academicRoutes = require("./modules/academic/AcademicRoutes");
 
-const DeviceRoutes = require("./modules/Device/DeviceRoutes");
-
 const BiometricRoutes = require("./modules/Biometric/BiometricRoutes");
 const AttendanceRoutes = require("./modules/Attendance/AttendanceRouter");
 const MediaRoutes = require("./modules/Media/MediaRoutes");
@@ -195,8 +193,6 @@ app.get("/api/v1/readyz", async (req, res) => {
 app.use("/api/v1/auth", AuthRoutes);
 
 app.use("/api/v1/academic", academicRoutes);
-
-app.use("/api/v1/devices", DeviceRoutes);
 
 app.use("/api/v1/biometric", BiometricRoutes);
 

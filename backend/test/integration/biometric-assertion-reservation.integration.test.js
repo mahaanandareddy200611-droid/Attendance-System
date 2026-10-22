@@ -47,6 +47,8 @@ if (!testRedisUrl) {
                 providerUserId: userId,
                 livenessPassed: true,
                 faceMatchPassed: true,
+                activeLivenessPassed: true,
+                livenessMode: "ACTIVE_SEQUENCE_V1",
                 similarity: 0.98
             };
 
