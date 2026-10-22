@@ -56,11 +56,18 @@ api.interceptors.response.use(
       requestUrl.endsWith(path),
     );
 
-    if (error.response?.status === 401 && !isPublicAuthRequest) {
+    const authMessage = String(error.response?.data?.error?.message || error.response?.data?.message || "");
+    const isAuthenticationFailure =
+      requestUrl.endsWith("/auth/me") ||
+      /token not found|invalid authorization format|invalid or expired token\. please login again|invalid authentication token|session is no longer valid|session has expired or been revoked|please log in again|authentication required/i.test(authMessage);
+
+    // A 401 may be an expired QR or biometric challenge. Do not end the user's
+    // login session unless the response indicates an authentication failure.
+    if (error.response?.status === 401 && !isPublicAuthRequest && isAuthenticationFailure) {
       localStorage.removeItem("token");
       localStorage.removeItem("user");
       sessionStorage.removeItem("token");
-
+      sessionStorage.removeItem("user");
       window.dispatchEvent(new Event("attendance:unauthorized"));
     }
 

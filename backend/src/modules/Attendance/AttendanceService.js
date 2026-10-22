@@ -38,6 +38,8 @@ const {
 const {
     getCurrentChallenge,
     verifyChallenge,
+    createQrValidationTicket,
+    getQrValidationTicket,
     claimQrUse,
     completeQrUse,
     releaseQrUse
@@ -738,12 +740,77 @@ exports.endSession = async ({
 
 /*
 ==================================================
+VALIDATE QR BEFORE FACE CAMERA FLOW
+==================================================
+*/
+exports.validateQr = async ({ studentId, token, ipAddress, userAgent }) => {
+    if (typeof token !== "string" || !token.trim()) {
+        throw new AppError("Attendance QR token is required", 400);
+    }
+    const tokenResult = verifyAttendanceToken(token);
+    if (!tokenResult.valid) {
+        await AttendanceAttempt.create({ studentId, result: "INVALID_TOKEN", ipAddress, userAgent });
+        throw new AppError("Invalid attendance QR. Scan the current code shown by your lecturer.", 401);
+    }
+
+    const { sid, slot, nonce } = tokenResult.payload;
+    if (!isSlotFresh(slot)) {
+        throw new AppError("Attendance QR has expired. Scan the current code again.", 401);
+    }
+
+    const session = await AttendanceSession.findOne({
+        sessionId: sid,
+        status: "ACTIVE",
+        expiresAt: { $gt: new Date() }
+    });
+    if (!session) throw new AppError("Attendance session is inactive or expired", 409);
+
+    const challengeValid = await verifyChallenge({ sessionId: session.sessionId, slot, nonce });
+    if (!challengeValid) {
+        throw new AppError("Attendance QR challenge is invalid or expired. Scan the current code again.", 401);
+    }
+
+    const rosterEntry = await AttendanceSessionStudent.findOne({
+        sessionId: session._id,
+        studentId
+    }).select("status").lean();
+    if (!rosterEntry) {
+        await AttendanceAttempt.create({ sessionId: session._id, studentId, result: "NOT_ELIGIBLE", ipAddress, userAgent });
+        throw new AppError("You are not enrolled/eligible for this attendance session", 403);
+    }
+    if (rosterEntry.status === "PRESENT") {
+        throw new AppError("Attendance has already been marked for this session", 409);
+    }
+    if (!["ELIGIBLE", "LATE"].includes(rosterEntry.status)) {
+        throw new AppError("Student cannot mark attendance in the current state", 403);
+    }
+
+    const ticket = await createQrValidationTicket({
+        studentId,
+        sessionId: session.sessionId,
+        sessionRecordId: session._id,
+        token,
+        slot,
+        nonce
+    });
+    return {
+        ...ticket,
+        sessionId: session.sessionId,
+        courseCode: session.courseCode,
+        section: session.section
+    };
+};
+
+
+/*
+==================================================
 VERIFY ATTENDANCE
 ==================================================
 */
 
 exports.verifyAttendance = async ({
     studentId,
+    validationId,
     token,
     deviceId,
     deviceSignature,
@@ -762,6 +829,18 @@ exports.verifyAttendance = async ({
     1. VALIDATE REQUIRED INPUT
     --------------------------------------------------
     */
+
+    let qrValidationTicket = null;
+    if (validationId) {
+        qrValidationTicket = await getQrValidationTicket({ validationId });
+        if (!qrValidationTicket) {
+            throw new AppError("QR validation ticket expired or invalid. Scan the QR again.", 401);
+        }
+        if (String(qrValidationTicket.studentId) !== String(studentId)) {
+            throw new AppError("QR validation ticket does not belong to this student", 403);
+        }
+        token = qrValidationTicket.token;
+    }
 
     if (!token) {
         throw new AppError(
@@ -831,6 +910,14 @@ exports.verifyAttendance = async ({
             404
         );
     }
+    
+    if (qrValidationTicket && (
+        String(qrValidationTicket.sessionId) !== String(session.sessionId) ||
+        String(qrValidationTicket.sessionRecordId) !== String(session._id) ||
+        String(sid) !== String(qrValidationTicket.sessionId)
+    )) {
+        throw new AppError("QR validation ticket does not match this attendance session", 403);
+    }
 
 
 
@@ -841,6 +928,7 @@ exports.verifyAttendance = async ({
         key: idempotencyKey,
         studentId,
         sessionId: session._id,
+        validationId: validationId || null,
         token,
         deviceId,
         deviceSignature,
@@ -866,7 +954,7 @@ exports.verifyAttendance = async ({
     }
 
     // Only new or reclaimable requests need a fresh QR slot.
-    if (!isSlotFresh(slot)) {
+    if (!qrValidationTicket && !isSlotFresh(slot)) {
         throw new AppError(
             "Attendance QR has expired",
             401
@@ -899,85 +987,97 @@ exports.verifyAttendance = async ({
     }
 
 
-    if (!deviceId || !deviceSignature) {
-        throw new AppError("Registered device proof is required", 401);
-    }
+    let studentLatitude;
+    let studentLongitude;
+    let studentAccuracy;
+    let gpsCapturedAt;
+    let distance;
 
-    /*
-    --------------------------------------------------
-    DEVICE CRYPTOGRAPHIC VERIFICATION
-    Verify the signed request before trusting GPS inputs.
-    --------------------------------------------------
-    */
-    await verifyAttendanceDevice({
-        userId: studentId,
-        deviceId,
-        signature: deviceSignature,
-        sessionId: session.sessionId,
-        token,
-        idempotencyKey,
-        biometricAssertionId,
-        latitude,
-        longitude,
-        accuracyMeters,
-        capturedAt
-    });
-    const studentLatitude = Number(latitude);
-    const studentLongitude = Number(longitude);
-    const studentAccuracy = Number(accuracyMeters);
-    const gpsCapturedAt = new Date(capturedAt);
-
-    if (
-        !Number.isFinite(studentLatitude) ||
-        !Number.isFinite(studentLongitude) ||
-        !Number.isFinite(studentAccuracy) ||
-        Number.isNaN(gpsCapturedAt.getTime())
-    ) {
-        throw new AppError("Valid GPS data is required", 400);
-    }
-
-    const now = Date.now();
-    const maxGpsAccuracy = Number(process.env.ATTENDANCE_MAX_GPS_ACCURACY_METERS) || 150;
-    const maxGpsAgeMs = Number(process.env.ATTENDANCE_MAX_GPS_AGE_MS) || 120000;
-    const gpsAgeMs = now - gpsCapturedAt.getTime();
-    if (
-        studentAccuracy > maxGpsAccuracy ||
-        gpsAgeMs > maxGpsAgeMs ||
-        gpsAgeMs < -30000
-    ) {
-        await AttendanceAttempt.create({
-            sessionId: session._id,
-            studentId,
-            result: "GPS_UNRELIABLE",
-            ipAddress,
-            userAgent
+    // Legacy clients still use cryptographic device proof + GPS. The new
+    // browser flow uses the student-bound QR ticket and face/liveness.
+    if (!qrValidationTicket) {
+        if (!deviceId || !deviceSignature) {
+            throw new AppError("Registered device proof is required", 401);
+        }
+    
+        /*
+        --------------------------------------------------
+        DEVICE CRYPTOGRAPHIC VERIFICATION
+        Verify the signed request before trusting GPS inputs.
+        --------------------------------------------------
+        */
+        await verifyAttendanceDevice({
+            userId: studentId,
+            deviceId,
+            signature: deviceSignature,
+            sessionId: session.sessionId,
+            token,
+            idempotencyKey,
+            biometricAssertionId,
+            latitude,
+            longitude,
+            accuracyMeters,
+            capturedAt
         });
-        throw new AppError(
-            "Location is too imprecise or out of date. Enable precise location and try again.",
-            422
-        );
-    }
-
-    const classroom = session.classroomSnapshot;
-    const distance = distanceMeters({
-        latitude1: studentLatitude,
-        longitude1: studentLongitude,
-        latitude2: classroom.latitude,
-        longitude2: classroom.longitude
-    });
-
-    const allowedDistance = classroom.geofenceRadiusMeters + studentAccuracy;
-    if (distance > allowedDistance) {
-        await AttendanceAttempt.create({
-            sessionId: session._id,
-            studentId,
-            result: "GPS_OUTSIDE_GEOFENCE",
-            ipAddress,
-            userAgent
+        studentLatitude = Number(latitude);
+        studentLongitude = Number(longitude);
+        studentAccuracy = Number(accuracyMeters);
+        gpsCapturedAt = new Date(capturedAt);
+    
+        if (
+            !Number.isFinite(studentLatitude) ||
+            !Number.isFinite(studentLongitude) ||
+            !Number.isFinite(studentAccuracy) ||
+            Number.isNaN(gpsCapturedAt.getTime())
+        ) {
+            throw new AppError("Valid GPS data is required", 400);
+        }
+    
+        const now = Date.now();
+        const maxGpsAccuracy = Number(process.env.ATTENDANCE_MAX_GPS_ACCURACY_METERS) || 150;
+        const maxGpsAgeMs = Number(process.env.ATTENDANCE_MAX_GPS_AGE_MS) || 120000;
+        const gpsAgeMs = now - gpsCapturedAt.getTime();
+        if (
+            studentAccuracy > maxGpsAccuracy ||
+            gpsAgeMs > maxGpsAgeMs ||
+            gpsAgeMs < -30000
+        ) {
+            await AttendanceAttempt.create({
+                sessionId: session._id,
+                studentId,
+                result: "GPS_UNRELIABLE",
+                ipAddress,
+                userAgent
+            });
+            throw new AppError(
+                "Location is too imprecise or out of date. Enable precise location and try again.",
+                422
+            );
+        }
+    
+        const classroom = session.classroomSnapshot;
+        distance = distanceMeters({
+            latitude1: studentLatitude,
+            longitude1: studentLongitude,
+            latitude2: classroom.latitude,
+            longitude2: classroom.longitude
         });
-        throw new AppError("Student location is outside the attendance area", 403);
+    
+        const allowedDistance = classroom.geofenceRadiusMeters + studentAccuracy;
+        if (distance > allowedDistance) {
+            await AttendanceAttempt.create({
+                sessionId: session._id,
+                studentId,
+                result: "GPS_OUTSIDE_GEOFENCE",
+                ipAddress,
+                userAgent
+            });
+            throw new AppError("Student location is outside the attendance area", 403);
+        }
+    
+    
+    
     }
-
 
     /*
     --------------------------------------------------
@@ -985,15 +1085,12 @@ exports.verifyAttendance = async ({
     --------------------------------------------------
     */
 
-    const challengeValid =
-        await verifyChallenge({
-            sessionId:
-                session.sessionId,
-
+    const challengeValid = qrValidationTicket
+        ? true
+        : await verifyChallenge({
+            sessionId: session.sessionId,
             slot,
-
-            nonce:
-                tokenResult.payload.nonce
+            nonce: tokenResult.payload.nonce
         });
 
 
@@ -1354,28 +1451,19 @@ exports.verifyAttendance = async ({
 
                         verification: {
                             qr: true,
-                            device: true,
+                            device: !qrValidationTicket,
                             proximity: false,
                             biometric: true
                         },
-
-                        gps: {
-                            latitude:
-                                studentLatitude,
-
-                            longitude:
-                                studentLongitude,
-
-                            accuracyMeters:
-                                studentAccuracy,
-
-                            capturedAt:
-                                gpsCapturedAt,
-
-                            distanceFromClassroomMeters:
-                                distance
-                        },
-
+                        ...(qrValidationTicket ? {} : {
+                            gps: {
+                                latitude: studentLatitude,
+                                longitude: studentLongitude,
+                                accuracyMeters: studentAccuracy,
+                                capturedAt: gpsCapturedAt,
+                                distanceFromClassroomMeters: distance
+                            }
+                        }),
                         dbSession
                     });
 

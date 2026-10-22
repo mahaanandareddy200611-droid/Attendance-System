@@ -4,7 +4,16 @@ exports.createSession = Joi.object({
   sectionId: Joi.string().hex().length(24).required(),
 });
 
-exports.verifyAttendance = Joi.object({
+exports.validateQr = Joi.object({
+  token: Joi.string().trim().min(20).max(4096).required(),
+});
+
+const ticketAttendance = Joi.object({
+  validationId: Joi.string().uuid().required(),
+  biometricAssertionId: Joi.string().uuid().required(),
+}).unknown(false);
+
+const legacyAttendance = Joi.object({
   token: Joi.string().min(20).max(4096).required(),
   deviceId: Joi.string().trim().min(8).max(200).required(),
   deviceSignature: Joi.string().min(40).max(256).required(),
@@ -13,4 +22,6 @@ exports.verifyAttendance = Joi.object({
   longitude: Joi.number().min(-180).max(180).required(),
   accuracyMeters: Joi.number().min(0).max(10000).required(),
   capturedAt: Joi.date().iso().required(),
-});
+}).unknown(false);
+
+exports.verifyAttendance = Joi.alternatives().try(ticketAttendance, legacyAttendance);

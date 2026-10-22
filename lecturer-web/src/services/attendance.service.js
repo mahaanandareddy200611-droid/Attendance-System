@@ -1,70 +1,12 @@
 import api from "../api/api";
-import { signAttendanceRequest } from "./device.service";
+export const getMyAttendanceRecords = (params = {}) => api.get("/attendance/records/me", { params });
+export const getAvailableAttendanceSessions = () => api.get("/attendance/sessions/available");
+export const validateAttendanceQr = (token) => api.post("/attendance/validate-qr", { token });
 
-export const getMyAttendanceRecords = (params = {}) =>
-  api.get("/attendance/records/me", { params });
-export const getAvailableAttendanceSessions = () =>
-  api.get("/attendance/sessions/available");
-
-export function getCurrentLocation() {
-  return new Promise((resolve, reject) => {
-    if (!navigator.geolocation)
-      return reject(new Error("Location is not supported by this browser."));
-    navigator.geolocation.getCurrentPosition(
-      ({ coords }) =>
-        resolve({
-          latitude: coords.latitude,
-          longitude: coords.longitude,
-          accuracyMeters: coords.accuracy,
-          capturedAt: new Date().toISOString(),
-        }),
-      (error) =>
-        reject(
-          new Error(
-            error.message || "Allow location access to mark attendance.",
-          ),
-        ),
-      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 },
-    );
+export async function markAttendance({ validationId, biometricAssertionId, idempotencyKey }) {
+  if (!validationId) throw new Error("Scan and validate the lecturer's QR before face verification.");
+  if (!biometricAssertionId) throw new Error("Complete the face match and liveness check before attendance is recorded.");
+  return api.post("/attendance/verify", { validationId, biometricAssertionId }, {
+    headers: { "Idempotency-Key": idempotencyKey || crypto.randomUUID() },
   });
-}
-
-export async function markAttendance({
-  userId,
-  sessionId,
-  token,
-  biometricAssertionId,
-  locationEvidence,
-  idempotencyKey,
-}) {
-  const requestKey = idempotencyKey || crypto.randomUUID();
-  if (!biometricAssertionId) {
-    throw new Error("Complete the face and liveness check before marking attendance.");
-  }
-  // Obtain location before QR scanning so GPS permission/latency does not
-  // consume the short QR freshness window.
-  const location = locationEvidence || await getCurrentLocation();
-  const deviceId = localStorage.getItem(`attendanceDeviceId:${userId}`);
-  if (!deviceId)
-    throw new Error("Register this browser as your attendance device first.");
-  const deviceSignature = await signAttendanceRequest({
-    userId,
-    deviceId,
-    sessionId,
-    token,
-    idempotencyKey: requestKey,
-    biometricAssertionId,
-    ...location,
-  });
-  return api.post(
-    "/attendance/verify",
-    {
-      token,
-      deviceId,
-      deviceSignature,
-      biometricAssertionId,
-      ...location,
-    },
-    { headers: { "Idempotency-Key": requestKey } },
-  );
 }

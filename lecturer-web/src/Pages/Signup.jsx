@@ -28,12 +28,12 @@ function Signup() {
     setSubmitting(true);
     try {
       const data = {
-        name,
-        RollNumber: rollNumber,
-        email,
+        name: name.trim(),
+        RollNumber: rollNumber.trim().toUpperCase(),
+        email: email.trim().toLowerCase(),
         password,
         faceImage_url: "",
-        mobileNumber,
+        mobileNumber: mobileNumber.replace(/\s+/g, ""),
       };
 
       await signupuser(data);
@@ -78,6 +78,7 @@ function Signup() {
             <input
               id="signup-name"
               type="text"
+              autoComplete="name"
               placeholder="Enter your name"
               value={name}
               onChange={(e) => setName(e.target.value)}
@@ -91,6 +92,7 @@ function Signup() {
             <input
               id="signup-roll"
               type="text"
+              autoComplete="off"
               placeholder="24BCS101"
               pattern="[0-9]{2}B[A-Z]{2}[0-9]{3}"
               value={rollNumber}
@@ -105,6 +107,7 @@ function Signup() {
             <input
               id="signup-email"
               type="email"
+              autoComplete="email"
               placeholder="Enter your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -118,7 +121,11 @@ function Signup() {
             <input
               id="signup-mobile"
               type="tel"
-              placeholder="Enter your mobile number"
+              inputMode="numeric"
+              autoComplete="tel"
+              pattern="[0-9]{10}"
+              maxLength={10}
+              placeholder="10-digit mobile number"
               value={mobileNumber}
               onChange={(e) => setMobileNumber(e.target.value)}
               required
@@ -131,6 +138,7 @@ function Signup() {
             <input
               id="signup-password"
               type="password"
+              autoComplete="new-password"
               placeholder="Create a password"
               minLength={6}
               value={password}
@@ -145,6 +153,7 @@ function Signup() {
             <input
               id="signup-confirm"
               type="password"
+              autoComplete="new-password"
               placeholder="Confirm your password"
               value={confirmPassword}
               onChange={(e) => setConfirmPassword(e.target.value)}
