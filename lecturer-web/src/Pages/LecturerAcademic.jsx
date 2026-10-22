@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { getSectionStudents, getSections } from "../services/academic.service";
 import { getApiErrorMessage } from "../api/errors";
 import "../Styles/Academic.css";
@@ -7,6 +7,7 @@ import WorkspaceHeader from "../components/WorkspaceHeader";
 
 function LecturerAcademic() {
   const { sectionId: routeSectionId } = useParams();
+  const navigate = useNavigate();
   const [sectionId, setSectionId] = useState("");
   const selectedSectionId = routeSectionId || sectionId;
   const [sections, setSections] = useState([]);
@@ -63,7 +64,10 @@ function LecturerAcademic() {
             <span>Assigned section</span>
             <select
               value={selectedSectionId}
-              onChange={(event) => setSectionId(event.target.value)}
+              onChange={(event) => {
+                setSectionId(event.target.value);
+                if (routeSectionId) navigate("/lecturer/sections", { replace: true });
+              }}
               required
             >
               <option value="">Choose a section</option>

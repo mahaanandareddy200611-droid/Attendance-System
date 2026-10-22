@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/useAuth";
+import { safeReturnPath } from "../utils/navigation.js";
 import { getApiErrorMessage } from "../api/errors";
 import "./../Styles/App.css";
 
@@ -29,7 +30,7 @@ function Login() {
 
       if (!defaultPath)
         throw new Error("Your account has an unsupported role.");
-      navigate(location.state?.from?.pathname || defaultPath, {
+      navigate(safeReturnPath(location.state?.from, defaultPath), {
         replace: true,
       });
     } catch (error) {
@@ -72,6 +73,7 @@ function Login() {
             <input
               id="login-email"
               type="email"
+              autoComplete="email"
               placeholder="Enter your email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -85,6 +87,7 @@ function Login() {
             <input
               id="login-password"
               type="password"
+              autoComplete="current-password"
               placeholder="Enter your password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}

@@ -15,21 +15,21 @@ const emptyForm = {
 export default function AdminUsers() {
   const [form, setForm] = useState(emptyForm);
   const [lecturers, setLecturers] = useState([]);
+  const [listLoading, setListLoading] = useState(true);
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
 
   const loadLecturers = async () => {
+    setListLoading(true);
     try {
-      const response = await searchAcademicUsers({
-        role: "Lecturer",
-        limit: 100,
-      });
-      setLecturers(response.data.data || []);
+      const response = await searchAcademicUsers({ role: "Lecturer", limit: 100 });
+      setLecturers(Array.isArray(response.data?.data) ? response.data.data : []);
+      setError("");
     } catch (requestError) {
-      setError(
-        getApiErrorMessage(requestError, "Could not load lecturer accounts."),
-      );
+      setError(getApiErrorMessage(requestError, "Could not load lecturer accounts."));
+    } finally {
+      setListLoading(false);
     }
   };
 
@@ -47,6 +47,9 @@ export default function AdminUsers() {
               "Could not load lecturer accounts.",
             ),
           );
+      })
+      .finally(() => {
+        if (active) setListLoading(false);
       });
     return () => {
       active = false;
@@ -161,7 +164,9 @@ export default function AdminUsers() {
 
         <section className="academic-card">
           <h2>Active Lecturers</h2>
-          {lecturers.length ? (
+          {listLoading ? (
+            <p className="academic-empty" role="status">Loading Lecturer accounts…</p>
+          ) : lecturers.length ? (
             <div className="academic-table-wrap">
               <table className="academic-table">
                 <thead>
@@ -180,10 +185,15 @@ export default function AdminUsers() {
                 </tbody>
               </table>
             </div>
+          ) : error ? (
+            <div>
+              <p className="academic-empty">The Lecturer list could not be loaded.</p>
+              <button className="academic-button secondary" type="button" onClick={loadLecturers} disabled={listLoading}>
+                Retry loading accounts
+              </button>
+            </div>
           ) : (
-            <p className="academic-empty">
-              No active Lecturer accounts were found.
-            </p>
+            <p className="academic-empty">No active Lecturer accounts were found.</p>
           )}
         </section>
       </section>

@@ -4,8 +4,9 @@ import { getApiErrorMessage } from "../api/errors";
 import { useAuth } from "../auth/useAuth";
 import "../Styles/Academic.css";
 import WorkspaceHeader from "../components/WorkspaceHeader";
+import { createCsv, downloadCsv } from "../utils/csv.js";
 
-const emptyFilters = { from: "", to: "", courseCode: "", section: "" };
+const emptyFilters = { from: "", to: "", courseCode: "", section: "", q: "" };
 
 export default function AttendanceReports() {
   const { user } = useAuth();
@@ -19,55 +20,46 @@ export default function AttendanceReports() {
 
   useEffect(() => {
     let active = true;
-    getAttendanceReport({ ...appliedFilters, page, limit: 50 })
+    const controller = new AbortController();
+    getAttendanceReport(
+      { ...appliedFilters, page, limit: 50 },
+      { signal: controller.signal },
+    )
       .then((response) => {
         if (!active) return;
-        setRecords(response.data.data || []);
-        setPagination(response.data.pagination);
+        setRecords(Array.isArray(response.data?.data) ? response.data.data : []);
+        setPagination(response.data?.pagination || null);
       })
       .catch((requestError) => {
-        if (active)
-          setError(
-            getApiErrorMessage(
-              requestError,
-              "Could not load attendance records.",
-            ),
-          );
+        if (active && !controller.signal.aborted) {
+          setError(getApiErrorMessage(requestError, "Could not load attendance records."));
+        }
       })
       .finally(() => {
         if (active) setBusy(false);
       });
     return () => {
       active = false;
+      controller.abort();
     };
   }, [appliedFilters, page]);
 
   const exportCsv = () => {
-    const rows = [
-      ["Course", "Section", "Student", "Roll number", "Marked at"],
-      ...records.map((record) => [
-        record.courseCode,
-        record.section,
-        record.studentId?.Name,
-        record.studentId?.RollNumber,
-        record.markedAt ? new Date(record.markedAt).toISOString() : "",
-      ]),
-    ];
-    const csv = rows
-      .map((row) =>
-        row
-          .map((cell) => `"${String(cell ?? "").replaceAll('"', '""')}"`)
-          .join(","),
-      )
-      .join("\r\n");
-    const url = URL.createObjectURL(
-      new Blob([csv], { type: "text/csv;charset=utf-8" }),
+    const rows = records.map((record) => [
+      record.courseCode || record.sessionId?.courseCode,
+      record.section || record.sessionId?.section,
+      record.studentId?.Name,
+      record.studentId?.RollNumber,
+      record.status || "Recorded",
+      record.markedAt ? new Date(record.markedAt).toISOString() : "",
+    ]);
+    downloadCsv(
+      "attendance-report.csv",
+      createCsv(
+        ["Course", "Section", "Student", "Roll number", "Status", "Marked at"],
+        rows,
+      ),
     );
-    const anchor = document.createElement("a");
-    anchor.href = url;
-    anchor.download = "attendance-report.csv";
-    anchor.click();
-    URL.revokeObjectURL(url);
   };
 
   const admin = user?.role === "Admin";
@@ -103,16 +95,26 @@ export default function AttendanceReports() {
           className="academic-card report-toolbar"
           onSubmit={(event) => {
             event.preventDefault();
+            if (filters.from && filters.to && filters.from > filters.to) {
+              setError("The start date must be on or before the through date.");
+              return;
+            }
             setBusy(true);
             setError("");
             setPage(1);
-            setAppliedFilters(filters);
+            setAppliedFilters({
+              ...filters,
+              courseCode: filters.courseCode.trim(),
+              section: filters.section.trim(),
+              q: filters.q.trim(),
+            });
           }}
         >
           <label className="academic-field">
             <span>From date</span>
             <input
               type="date"
+              max={filters.to || undefined}
               value={filters.from}
               onChange={(event) => updateFilter("from", event.target.value)}
             />
@@ -121,6 +123,7 @@ export default function AttendanceReports() {
             <span>Through date</span>
             <input
               type="date"
+              min={filters.from || undefined}
               value={filters.to}
               onChange={(event) => updateFilter("to", event.target.value)}
             />
@@ -141,6 +144,14 @@ export default function AttendanceReports() {
               value={filters.section}
               onChange={(event) => updateFilter("section", event.target.value)}
               placeholder="A"
+            />
+          </label>
+          <label className="academic-field">
+            <span>Student / roll number</span>
+            <input
+              value={filters.q}
+              onChange={(event) => updateFilter("q", event.target.value)}
+              placeholder="Search student"
             />
           </label>
           <button className="academic-button" type="submit" disabled={busy}>
@@ -165,6 +176,7 @@ export default function AttendanceReports() {
                   <th>Section</th>
                   <th>Student</th>
                   <th>Roll number</th>
+                  <th>Status</th>
                   <th>Marked at</th>
                 </tr>
               </thead>
@@ -175,6 +187,7 @@ export default function AttendanceReports() {
                     <td>{record.section}</td>
                     <td>{record.studentId?.Name || "—"}</td>
                     <td>{record.studentId?.RollNumber || "—"}</td>
+                    <td><span className={"attendance-state " + String(record.status || "recorded").toLowerCase().replace(/[^a-z0-9_-]/g, "")}>{record.status || "Recorded"}</span></td>
                     <td>
                       {record.markedAt
                         ? new Date(record.markedAt).toLocaleString()
@@ -185,6 +198,7 @@ export default function AttendanceReports() {
               </tbody>
             </table>
           </div>
+          {busy && <p className="academic-empty" role="status">Loading attendance records…</p>}
           {!busy && !records.length && (
             <p className="academic-empty">
               No attendance records match these filters.

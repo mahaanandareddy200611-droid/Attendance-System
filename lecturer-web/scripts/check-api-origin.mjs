@@ -19,10 +19,12 @@ if (!value) {
 
   if (url) {
     const localHost = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
+    const retiredHost = url.hostname === "attendance-backend-staging.onrender.com";
     const path = url.pathname.replace(/\/+$/, "");
     if (
       url.protocol !== "https:" ||
       localHost ||
+      retiredHost ||
       url.username ||
       url.password ||
       url.search ||
