@@ -4,7 +4,7 @@ const multer = require('multer');
 const sharp = require('sharp');
 const AppError = require('../../utils/AppError');
 
-const MAX_FILE_BYTES = 1024 * 1024;
+const MAX_FILE_BYTES = 2 * 1024 * 1024;
 const MAX_PIXELS = 12_000_000;
 const MAX_DIMENSION = 8192;
 const MAX_NORMALIZED_BYTES = 2 * 1024 * 1024;

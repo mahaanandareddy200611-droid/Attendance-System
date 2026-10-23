@@ -206,13 +206,32 @@ async function requestSigned({ method, key, body, contentType, query = [], bucke
       ...(method === "PUT" ? { body } : {}),
       signal: AbortSignal.timeout(Number(process.env.OBJECT_STORAGE_TIMEOUT_MS) || 10000),
     });
-  } catch {
-    throw new AppError("Private object storage is temporarily unavailable", 503);
+  } catch (cause) {
+    const error = new AppError("Private object storage is temporarily unavailable", 503);
+    error.storageCode = "STORAGE_NETWORK_ERROR";
+    const causeCode = cause?.cause?.code || cause?.code;
+    const causeName = cause?.cause?.name || cause?.name;
+    if (typeof causeCode === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(causeCode)) error.storageCauseCode = causeCode;
+    if (typeof causeName === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(causeName)) error.storageCauseName = causeName;
+    throw error;
   }
 
   if (method === "DELETE" && response.status === 404) return response;
   if (!response.ok) {
-    throw new AppError("Private object storage request failed", 503);
+    let responseBody = "";
+    try {
+      responseBody = await response.text();
+    } catch {
+      // The HTTP status remains useful if the provider response body cannot be read.
+    }
+    const rawCode = readXmlTag(responseBody, "Code");
+    const storageCode = typeof rawCode === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(rawCode)
+      ? rawCode
+      : "HTTP_" + response.status;
+    const error = new AppError("Private object storage request failed", 503);
+    error.storageStatus = response.status;
+    error.storageCode = storageCode;
+    throw error;
   }
   return response;
 }

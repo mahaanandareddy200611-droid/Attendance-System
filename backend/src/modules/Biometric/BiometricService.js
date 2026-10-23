@@ -191,7 +191,41 @@ exports.enroll = async ({ userId, imageBuffer, mimeType, consentVersion = null, 
             throw new AppError("Biometric enrollment already exists", 409);
         }
 
-        const result = await provider.enroll({ userId, imageBuffer, mimeType });
+        let result;
+        try {
+            result = await provider.enroll({ userId, imageBuffer, mimeType });
+        } catch (providerError) {
+            if (providerError?.cleanupProviderUserId) {
+                try {
+                    await BiometricEnrollment.create({
+                        userId,
+                        provider: "LOCAL",
+                        providerUserId: String(providerError.cleanupProviderUserId),
+                        modelVersion: process.env.BIOMETRIC_MODEL_VERSION || "insightface",
+                        status: "DELETE_PENDING",
+                        reviewDecision: "REJECTED",
+                        consentVersion: consentVersion || null,
+                        consentedAt: consentVersion && consentedAt ? consentedAt : null,
+                        revokedAt: new Date()
+                    });
+                } catch (persistError) {
+                    console.error("Rejected biometric profile cleanup could not be queued", {
+                        errorName: persistError?.name || "Error",
+                        statusCode: Number.isInteger(persistError?.statusCode) ? persistError.statusCode : undefined
+                    });
+                    throw new AppError(
+                        "The provider rejected this face image, but automatic cleanup could not be queued. Contact an administrator before retrying.",
+                        503
+                    );
+                }
+                throw new AppError(
+                    "No usable face was accepted. Provider cleanup is pending; refresh enrollment status before retrying.",
+                    503
+                );
+            }
+            throw providerError;
+        }
+
         try {
             return await BiometricEnrollment.create({
                 userId,

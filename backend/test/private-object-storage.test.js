@@ -127,6 +127,31 @@ test("download URL is signed, expires quickly, and is not a public object URL", 
   );
 });
 
+test("storage failures expose only sanitized HTTP status and provider error code", async (t) => {
+  setStorageEnvironment(t);
+  const previousPurge = process.env.OBJECT_STORAGE_PURGE_VERSIONS;
+  process.env.OBJECT_STORAGE_PURGE_VERSIONS = "false";
+  t.after(() => {
+    if (previousPurge === undefined) delete process.env.OBJECT_STORAGE_PURGE_VERSIONS;
+    else process.env.OBJECT_STORAGE_PURGE_VERSIONS = previousPurge;
+  });
+
+  const originalFetch = global.fetch;
+  global.fetch = async () => new Response(
+    "<Error><Code>AccessDenied</Code><Message>not logged</Message></Error>",
+    { status: 403, headers: { "content-type": "application/xml" } },
+  );
+  t.after(() => { global.fetch = originalFetch; });
+
+  await assert.rejects(
+    storage.deleteObject({ key: "evidence/507f1f77bcf86cd799439011/example.jpg" }),
+    (error) => error.statusCode === 503 &&
+      error.storageStatus === 403 &&
+      error.storageCode === "AccessDenied" &&
+      !("providerResponse" in error),
+  );
+});
+
 test("object deletion treats a missing object as an idempotent success", async (t) => {
   setStorageEnvironment(t);
   const originalFetch = global.fetch;
