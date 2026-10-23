@@ -22,7 +22,10 @@ const {
     enroll,
     createChallenge,
     verify,
-    getMyEnrollment
+    getMyEnrollment,
+    listEnrollmentApprovals,
+    approveEnrollment,
+    rejectEnrollment
 } = require("./BiometricController");
 
 const router = express.Router();
@@ -96,6 +99,27 @@ async function requireActiveEligibleSession(req, res, next) {
         return next(error);
     }
 }
+
+router.get(
+    "/enrollment-approvals",
+    Auth,
+    authorize("Lecturer", "Admin"),
+    listEnrollmentApprovals
+);
+
+router.post(
+    "/enrollment-approvals/:studentId/approve",
+    Auth,
+    authorize("Lecturer", "Admin"),
+    approveEnrollment
+);
+
+router.post(
+    "/enrollment-approvals/:studentId/reject",
+    Auth,
+    authorize("Lecturer", "Admin"),
+    rejectEnrollment
+);
 
 router.get(
     "/me",

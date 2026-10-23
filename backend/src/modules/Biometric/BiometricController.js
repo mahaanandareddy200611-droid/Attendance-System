@@ -7,6 +7,32 @@ const AppError =
 const biometricService =
     require("./BiometricService");
 
+exports.listEnrollmentApprovals = asyncHandler(async (req, res) => {
+    const data = await biometricService.listPendingEnrollmentApprovals({
+        reviewerId: req.user.id,
+        role: req.user.role
+    });
+    return res.status(200).json({ success: true, count: data.length, data, requestId: req.id });
+});
+
+exports.approveEnrollment = asyncHandler(async (req, res) => {
+    const data = await biometricService.approveEnrollment({
+        studentId: req.params.studentId,
+        reviewerId: req.user.id,
+        role: req.user.role
+    });
+    return res.status(200).json({ success: true, message: "Face enrollment approved", data, requestId: req.id });
+});
+
+exports.rejectEnrollment = asyncHandler(async (req, res) => {
+    const data = await biometricService.rejectEnrollment({
+        studentId: req.params.studentId,
+        reviewerId: req.user.id,
+        role: req.user.role
+    });
+    return res.status(200).json({ success: true, message: "Face enrollment rejected and provider deletion confirmed", data, requestId: req.id });
+});
+
 exports.getMyEnrollment = asyncHandler(async (req, res) => {
     const enrollment = await biometricService.getMyEnrollment({ userId: req.user.id });
     return res.status(200).json({ success: true, data: enrollment });

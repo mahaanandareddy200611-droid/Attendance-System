@@ -1,5 +1,10 @@
 const crypto =
     require("crypto");
+const mongoose = require("mongoose");
+const ClassSection = require("../../models/ClassSection.model");
+const Enrollment = require("../../models/Enrollment.model");
+const User = require("../../models/Auth.model");
+const AuditEvent = require("../../models/AuditEvent.model");
 
 const BiometricEnrollment =
     require("../../models/BiometricEnrollment.model");
@@ -52,8 +57,8 @@ function biometricDeletionFailureDetails(error) {
 exports.getMyEnrollment = async ({ userId }) => {
     const enrollment = await BiometricEnrollment.findOne({
         userId,
-        status: { $in: ["ACTIVE", "DELETE_PENDING"] }
-    }).select("status provider modelVersion enrolledAt lastVerifiedAt").lean();
+        status: { $in: ["PENDING_APPROVAL", "ACTIVE", "DELETE_PENDING", "REJECTED"] }
+    }).sort({ updatedAt: -1 }).select("status provider modelVersion enrolledAt lastVerifiedAt reviewDecision reviewedAt approvedAt").lean();
     return enrollment || null;
 };
 
@@ -159,81 +164,57 @@ ENROLL
 --------------------------------------------------
 */
 
-exports.enroll =
-    async ({
-        userId,
-        imageBuffer,
-        mimeType
-    }) => {
+exports.enroll = async ({ userId, imageBuffer, mimeType }) => {
+    // One Redis reservation per student prevents duplicate provider enrollments
+    // when multiple stateless API instances receive concurrent requests.
+    const reservationKey = `biometric:enrollment-reservation:${String(userId)}`;
+    const reservationToken = crypto.randomUUID();
+    const reservationMs = Math.max(10000, Math.min(Number(process.env.BIOMETRIC_ENROLLMENT_RESERVATION_MS) || 30000, 120000));
+    const reserved = await redisClient.set(reservationKey, reservationToken, { NX: true, PX: reservationMs });
+    if (reserved !== "OK") {
+        throw new AppError("A face enrollment request is already being processed. Please retry shortly.", 409);
+    }
 
-        const existing =
-            await BiometricEnrollment.findOne({
-                userId,
-                status: { $in: ["ACTIVE", "DELETE_PENDING"] }
-            });
+    try {
+        const existing = await BiometricEnrollment.findOne({
+            userId,
+            status: { $in: ["PENDING_APPROVAL", "ACTIVE", "DELETE_PENDING"] }
+        }).select("status").lean();
 
         if (existing?.status === "DELETE_PENDING") {
-            throw new AppError(
-                "Biometric enrollment deletion is still pending; retry after provider cleanup completes",
-                409
-            );
+            throw new AppError("Biometric enrollment deletion is still pending; retry after provider cleanup completes", 409);
         }
-
+        if (existing?.status === "PENDING_APPROVAL") {
+            throw new AppError("Face enrollment is already waiting for lecturer approval", 409);
+        }
         if (existing?.status === "ACTIVE") {
-            throw new AppError(
-                "Biometric enrollment already exists",
-                409
-            );
+            throw new AppError("Biometric enrollment already exists", 409);
         }
 
-
-        const result =
-            await provider.enroll({
-                userId,
-                imageBuffer,
-                mimeType
-            });
-
-
+        const result = await provider.enroll({ userId, imageBuffer, mimeType });
         try {
-
-            const enrollment =
-                await BiometricEnrollment.create({
-                    userId,
-
-                    provider:
-                        "LOCAL",
-
-                    providerUserId:
-                        result.providerUserId,
-
-                    modelVersion:
-                        process.env
-                            .BIOMETRIC_MODEL_VERSION ||
-                        "insightface",
-
-                    status:
-                        "ACTIVE"
-                });
-
-
-            return enrollment;
-
+            return await BiometricEnrollment.create({
+                userId,
+                provider: "LOCAL",
+                providerUserId: result.providerUserId,
+                modelVersion: process.env.BIOMETRIC_MODEL_VERSION || "insightface",
+                status: "PENDING_APPROVAL",
+                reviewDecision: "PENDING"
+            });
         } catch (error) {
-
-            if (
-                error.code === 11000
-            ) {
-
-                throw new AppError(
-                    "Biometric enrollment already exists",
-                    409
-                );
+            // Avoid leaving a provider-side face profile orphaned if persistence
+            // fails after the provider accepted an enrollment.
+            try { await provider.deletePerson({ providerUserId: result.providerUserId }); } catch { /* Don't log private provider data. */ }
+            if (error.code === 11000) {
+                throw new AppError("Biometric enrollment already exists or is pending review", 409);
             }
-
             throw error;
         }
-    };
+    } finally {
+        const releaseScript = 'if redis.call("GET", KEYS[1]) == ARGV[1] then return redis.call("DEL", KEYS[1]) end return 0';
+        await redisClient.eval(releaseScript, { keys: [reservationKey], arguments: [reservationToken] }).catch(() => {});
+    }
+};
 
 
 /*
@@ -932,60 +913,225 @@ exports.verifyActiveSequence = async ({ userId, sessionId, challengeId, challeng
  * The periodic sweeper retries pending deletions until the provider confirms
  * deletion (a provider 404 is treated as already deleted).
  */
+
+/*
+ * Lecturers may review only students enrolled in an active section assigned
+ * to them. Admins may review all student submissions. Provider identifiers
+ * and biometric samples are never exposed by these review endpoints.
+ */
+async function assertReviewerCanReviewStudent({ studentId, reviewerId, role }) {
+    if (!mongoose.isValidObjectId(studentId)) throw new AppError("Invalid student identifier", 400);
+    if (role === "Admin") return;
+    if (role !== "Lecturer") throw new AppError("Only lecturers or administrators can review face enrollment", 403);
+
+    const sections = await ClassSection.find({ lecturers: reviewerId, status: "ACTIVE" }).select("_id").lean();
+    const sectionIds = sections.map((section) => section._id);
+    if (!sectionIds.length) throw new AppError("You are not assigned to a section containing this student", 403);
+
+    const enrollment = await Enrollment.findOne({
+        studentId,
+        sectionId: { $in: sectionIds },
+        status: "ACTIVE"
+    }).select("_id").lean();
+    if (!enrollment) throw new AppError("You may review only students enrolled in your active sections", 403);
+}
+
+exports.listPendingEnrollmentApprovals = async ({ reviewerId, role }) => {
+    if (!["Admin", "Lecturer"].includes(role)) throw new AppError("Only lecturers or administrators can review face enrollment", 403);
+
+    const sectionFilter = { status: "ACTIVE" };
+    if (role === "Lecturer") sectionFilter.lecturers = reviewerId;
+    const sections = await ClassSection.find(sectionFilter)
+        .select("_id name academicYear courseId")
+        .populate("courseId", "code name")
+        .lean();
+    const sectionMap = new Map(sections.map((section) => [String(section._id), section]));
+    const sectionIds = sections.map((section) => section._id);
+    const activeEnrollments = sectionIds.length
+        ? await Enrollment.find({ sectionId: { $in: sectionIds }, status: "ACTIVE" })
+            .select("studentId sectionId rollNumber").lean()
+        : [];
+
+    const eligibleStudentIds = [...new Set(activeEnrollments.map((item) => String(item.studentId)))];
+    const pendingFilter = { status: "PENDING_APPROVAL" };
+    if (role === "Lecturer") {
+        if (!eligibleStudentIds.length) return [];
+        pendingFilter.userId = { $in: eligibleStudentIds };
+    }
+
+    const pending = await BiometricEnrollment.find(pendingFilter)
+        .select("userId status enrolledAt createdAt")
+        .sort({ enrolledAt: 1 })
+        .limit(200)
+        .lean();
+    if (!pending.length) return [];
+
+    const users = await User.find({
+        _id: { $in: pending.map((item) => item.userId) },
+        role: "Student",
+        status: "ACTIVE"
+    }).select("Name RollNumber email").lean();
+    const userMap = new Map(users.map((item) => [String(item._id), item]));
+
+    return pending.flatMap((item) => {
+        const studentId = String(item.userId);
+        const user = userMap.get(studentId);
+        if (!user) return [];
+        const classLinks = activeEnrollments
+            .filter((enrollment) => String(enrollment.studentId) === studentId)
+            .map((enrollment) => {
+                const section = sectionMap.get(String(enrollment.sectionId));
+                return {
+                    sectionId: String(enrollment.sectionId),
+                    sectionName: section?.name || "",
+                    academicYear: section?.academicYear || "",
+                    courseCode: section?.courseId?.code || "",
+                    courseName: section?.courseId?.name || "",
+                    rollNumber: enrollment.rollNumber || user.RollNumber || ""
+                };
+            });
+        return [{
+            studentId,
+            name: user.Name,
+            rollNumber: user.RollNumber || classLinks[0]?.rollNumber || "",
+            email: user.email,
+            status: item.status,
+            enrolledAt: item.enrolledAt || item.createdAt,
+            sections: classLinks
+        }];
+    });
+};
+
+exports.approveEnrollment = async ({ studentId, reviewerId, role }) => {
+    await assertReviewerCanReviewStudent({ studentId, reviewerId, role });
+    const reviewedAt = new Date();
+    const dbSession = await mongoose.startSession();
+    let updated;
+    try {
+        await dbSession.withTransaction(async () => {
+            const query = BiometricEnrollment.findOneAndUpdate(
+                { userId: studentId, status: "PENDING_APPROVAL" },
+                { $set: {
+                    status: "ACTIVE",
+                    reviewDecision: "APPROVED",
+                    reviewedBy: reviewerId,
+                    reviewedAt,
+                    approvedBy: reviewerId,
+                    approvedAt: reviewedAt
+                } },
+                { new: true, session: dbSession }
+            ).select("userId status reviewedAt approvedAt");
+            updated = await query.lean();
+            if (!updated) throw new AppError("No pending face enrollment was found for this student", 409);
+            await AuditEvent.create([{
+                event: "BIOMETRIC_ENROLLMENT_APPROVED",
+                userId: reviewerId,
+                metadata: { studentId: String(studentId) }
+            }], { session: dbSession });
+        });
+    } finally {
+        await dbSession.endSession();
+    }
+    return { studentId: String(updated.userId), status: updated.status, approvedAt: updated.approvedAt };
+};
+
+exports.rejectEnrollment = async ({ studentId, reviewerId, role }) => {
+    await assertReviewerCanReviewStudent({ studentId, reviewerId, role });
+    const reviewedAt = new Date();
+    const pending = await BiometricEnrollment.findOneAndUpdate(
+        { userId: studentId, status: "PENDING_APPROVAL" },
+        { $set: {
+            status: "DELETE_PENDING",
+            reviewDecision: "REJECTED",
+            reviewedBy: reviewerId,
+            reviewedAt,
+            revokedAt: reviewedAt
+        } },
+        { new: true }
+    ).select("userId provider providerUserId modelVersion status").lean();
+
+    if (!pending) throw new AppError("No pending face enrollment was found for this student", 409);
+    try {
+        await provider.deletePerson({ providerUserId: pending.providerUserId });
+    } catch {
+        throw new AppError("Rejection was recorded, but biometric provider deletion is pending retry", 503);
+    }
+
+    const dbSession = await mongoose.startSession();
+    try {
+        await dbSession.withTransaction(async () => {
+            const finalUpdate = await BiometricEnrollment.updateOne(
+                { userId: studentId, status: "DELETE_PENDING", reviewDecision: "REJECTED" },
+                { $set: { status: "REJECTED", revokedAt: new Date() } },
+                { session: dbSession }
+            );
+            if (finalUpdate.matchedCount !== 1) {
+                throw new AppError("Provider deletion completed but the enrollment state changed", 409);
+            }
+            await AuditEvent.create([{
+                event: "BIOMETRIC_ENROLLMENT_REJECTED",
+                userId: reviewerId,
+                metadata: { studentId: String(studentId), providerDeletionConfirmed: true }
+            }], { session: dbSession });
+        });
+    } catch {
+        // Provider deletion is idempotent; the retry sweeper will finish this
+        // durable DELETE_PENDING state without re-enabling attendance.
+        throw new AppError("Biometric provider deletion is confirmed, but review finalization is pending retry", 503);
+    } finally {
+        await dbSession.endSession();
+    }
+    return { studentId: String(studentId), status: "REJECTED" };
+};
+
 exports.revokeEnrollment = async ({ userId }) => {
     const enrollment = await BiometricEnrollment.findOne({
         userId,
-        status: { $in: ["ACTIVE", "DELETE_PENDING"] }
+        status: { $in: ["PENDING_APPROVAL", "ACTIVE", "DELETE_PENDING"] }
     });
 
-    if (!enrollment) {
-        return { status: "REVOKED", alreadyDeleted: true };
-    }
+    if (!enrollment) return { status: "REVOKED", alreadyDeleted: true };
 
-    if (enrollment.status === "ACTIVE") {
+    if (enrollment.status === "ACTIVE" || enrollment.status === "PENDING_APPROVAL") {
         await BiometricEnrollment.updateOne(
-            { _id: enrollment._id, status: "ACTIVE" },
-            { $set: { status: "DELETE_PENDING", revokedAt: new Date() } }
+            { _id: enrollment._id, status: enrollment.status },
+            { $set: {
+                status: "DELETE_PENDING",
+                revokedAt: new Date(),
+                ...(enrollment.status === "PENDING_APPROVAL" ? { reviewDecision: "WITHDRAWN" } : {})
+            } }
         );
     }
 
     try {
         await provider.deletePerson({ providerUserId: enrollment.providerUserId });
     } catch {
-        // Do not claim deletion. The scheduled sweeper will retry this record.
-        throw new AppError(
-            "Biometric deletion is pending because the provider is unavailable",
-            503
-        );
+        throw new AppError("Biometric deletion is pending because the provider is unavailable", 503);
     }
 
+    const finalStatus = enrollment.reviewDecision === "REJECTED" ? "REJECTED" : "REVOKED";
     await BiometricEnrollment.updateOne(
         { _id: enrollment._id, status: "DELETE_PENDING" },
-        { $set: { status: "REVOKED", revokedAt: new Date() } }
+        { $set: { status: finalStatus, revokedAt: new Date() } }
     );
 
     try {
-        const AuditEvent = require("../../models/AuditEvent.model");
         await AuditEvent.create({
-            event: "BIOMETRIC_ENROLLMENT_DELETED",
+            event: finalStatus === "REJECTED" ? "BIOMETRIC_ENROLLMENT_REJECTED" : "BIOMETRIC_ENROLLMENT_DELETED",
             userId,
             metadata: { provider: enrollment.provider, modelVersion: enrollment.modelVersion }
         });
     } catch (error) {
-        console.error("Biometric deletion audit event failed", {
-            errorName: error?.name || "Error"
-        });
+        console.error("Biometric deletion audit event failed", { errorName: error?.name || "Error" });
     }
 
-    return { status: "REVOKED", alreadyDeleted: false };
+    return { status: finalStatus, alreadyDeleted: false };
 };
 
 exports.sweepPendingBiometricDeletes = async ({ limit = 10 } = {}) => {
     const boundedLimit = Math.max(1, Math.min(Number(limit) || 10, 50));
-    const pending = await BiometricEnrollment.find({
-        status: "DELETE_PENDING"
-    })
-        .select("userId provider providerUserId modelVersion")
+    const pending = await BiometricEnrollment.find({ status: "DELETE_PENDING" })
+        .select("userId provider providerUserId modelVersion reviewDecision")
         .sort({ updatedAt: 1 })
         .limit(boundedLimit)
         .lean();
@@ -994,35 +1140,26 @@ exports.sweepPendingBiometricDeletes = async ({ limit = 10 } = {}) => {
     for (const enrollment of pending) {
         try {
             await provider.deletePerson({ providerUserId: enrollment.providerUserId });
+            const finalStatus = enrollment.reviewDecision === "REJECTED" ? "REJECTED" : "REVOKED";
             const update = await BiometricEnrollment.updateOne(
                 { userId: enrollment.userId, status: "DELETE_PENDING" },
-                { $set: { status: "REVOKED", revokedAt: new Date() } }
+                { $set: { status: finalStatus, revokedAt: new Date() } }
             );
             if (update.modifiedCount === 1) {
                 try {
-                    const AuditEvent = require("../../models/AuditEvent.model");
                     await AuditEvent.create({
-                        event: "BIOMETRIC_ENROLLMENT_DELETED",
+                        event: finalStatus === "REJECTED" ? "BIOMETRIC_ENROLLMENT_REJECTED" : "BIOMETRIC_ENROLLMENT_DELETED",
                         userId: enrollment.userId,
-                        metadata: {
-                            provider: enrollment.provider,
-                            modelVersion: enrollment.modelVersion,
-                            reason: "PENDING_DELETE_RETRY"
-                        }
+                        metadata: { provider: enrollment.provider, modelVersion: enrollment.modelVersion, reason: "PENDING_DELETE_RETRY" }
                     });
                 } catch (error) {
-                    console.error("Biometric deletion audit event failed", {
-                        errorName: error?.name || "Error"
-                    });
+                    console.error("Biometric deletion audit event failed", { errorName: error?.name || "Error" });
                 }
                 result.deleted += 1;
             }
         } catch (error) {
             result.failed += 1;
-            console.error(
-                "Pending biometric deletion retry failed",
-                biometricDeletionFailureDetails(error)
-            );
+            console.error("Pending biometric deletion retry failed", biometricDeletionFailureDetails(error));
         }
     }
     return result;

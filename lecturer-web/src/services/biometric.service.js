@@ -1,6 +1,11 @@
 import api from "../api/api";
 
 export const getMyBiometricEnrollment = () => api.get("/biometric/me");
+export const getPendingBiometricEnrollments = () => api.get("/biometric/enrollment-approvals");
+export const approveBiometricEnrollment = (studentId) =>
+  api.post(`/biometric/enrollment-approvals/${encodeURIComponent(studentId)}/approve`);
+export const rejectBiometricEnrollment = (studentId) =>
+  api.post(`/biometric/enrollment-approvals/${encodeURIComponent(studentId)}/reject`);
 
 async function prepareBiometricImage(image) {
   if (

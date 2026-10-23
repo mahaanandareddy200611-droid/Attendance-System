@@ -13,6 +13,8 @@ const LecturerSessionResults = lazy(
   () => import("./Pages/LecturerSessionResults"),
 );
 const StudentAcademic = lazy(() => import("./Pages/StudentAcademic"));
+const StudentFaceEnrollment = lazy(() => import("./Pages/StudentFaceEnrollment"));
+const BiometricEnrollmentApprovals = lazy(() => import("./Pages/BiometricEnrollmentApprovals"));
 const Login = lazy(() => import("./Pages/Login"));
 const Signup = lazy(() => import("./Pages/Signup"));
 const ForgotPassword = lazy(() => import("./Pages/ForgotPassword"));
@@ -52,6 +54,7 @@ export default function App() {
           <Route path="/admin/sections" element={admin(<AdminAcademic />)} />
           <Route path="/admin/enrollments" element={admin(<AdminAcademic />)} />
           <Route path="/admin/users" element={admin(<AdminUsers />)} />
+          <Route path="/admin/biometric-approvals" element={admin(<BiometricEnrollmentApprovals />)} />
           <Route path="/admin/reports" element={admin(<AttendanceReports />)} />
 
           <Route path="/dashboard" element={lecturer(<Dashboard />)} />
@@ -92,6 +95,10 @@ export default function App() {
             path="/lecturer/reports"
             element={lecturer(<AttendanceReports />)}
           />
+          <Route
+            path="/lecturer/enrollment-approvals"
+            element={lecturer(<BiometricEnrollmentApprovals />)}
+          />
 
           <Route
             path="/student"
@@ -104,6 +111,10 @@ export default function App() {
           <Route
             path="/student/dashboard"
             element={student(<StudentAcademic />)}
+          />
+          <Route
+            path="/student/face-enrollment"
+            element={student(<StudentFaceEnrollment />)}
           />
 
           <Route path="*" element={<Navigate to="/login" replace />} />

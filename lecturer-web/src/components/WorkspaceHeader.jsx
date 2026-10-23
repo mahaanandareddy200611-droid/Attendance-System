@@ -10,14 +10,16 @@ const linksByRole = {
     ["Enrollments", "/admin/enrollments"],
     ["Lecturers", "/admin/users"],
     ["Reports", "/admin/reports"],
+    ["Face approvals", "/admin/biometric-approvals"],
   ],
   Lecturer: [
     ["Dashboard", "/lecturer/dashboard"],
     ["My sections", "/lecturer/sections"],
     ["Attendance", "/lecturer/sessions/new"],
     ["Reports", "/lecturer/reports"],
+    ["Face approvals", "/lecturer/enrollment-approvals"],
   ],
-  Student: [["My classes", "/student/dashboard"]],
+  Student: [["My classes", "/student/dashboard"], ["Face enrollment", "/student/face-enrollment"]],
 };
 
 const homeByRole = {
