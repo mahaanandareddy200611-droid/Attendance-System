@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   createActiveBiometricChallenge,
   verifyActiveBiometricSequence,
@@ -58,7 +58,7 @@ export default function ActiveLivenessCapture({
 
   useEffect(() => () => stopStream(streamRef.current), []);
 
-  const reset = () => {
+  const reset = useCallback(() => {
     challengeRequestedRef.current = false;
     stopStream(streamRef.current);
     streamRef.current = null;
@@ -69,7 +69,7 @@ export default function ActiveLivenessCapture({
     setChallenge(null);
     setFrames([]);
     setCurrentStep(0);
-  };
+  }, []);
 
   const start = async () => {
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
@@ -135,7 +135,7 @@ export default function ActiveLivenessCapture({
         reset();
       })
       .finally(() => setBusy(false));
-  }, [cameraActive, cameraReady, challenge, disabled, busy, sessionId]);
+  }, [cameraActive, cameraReady, challenge, disabled, busy, sessionId, reset]);
 
   const captureFrame = async () => {
     const video = videoRef.current;
