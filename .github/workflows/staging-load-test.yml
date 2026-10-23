@@ -1,0 +1,113 @@
+name: Staging Load Test
+
+on:
+  workflow_dispatch:
+    inputs:
+      api_base_url:
+        description: HTTPS staging API base ending in /api/v1 (must be a staging hostname)
+        required: true
+        type: string
+      test_path:
+        description: Read-only endpoint; /auth/me requires the STAGING_BEARER_TOKENS secret
+        required: true
+        default: /livez
+        type: choice
+        options:
+          - /livez
+          - /health
+          - /auth/me
+      target_rps:
+        description: Gradual arrival-rate target; 1,000 and 3,000 require an acknowledgement
+        required: true
+        default: "100"
+        type: choice
+        options:
+          - "50"
+          - "100"
+          - "300"
+          - "1000"
+          - "3000"
+      target_duration:
+        description: Time spent at the selected peak arrival rate
+        required: true
+        default: 30s
+        type: choice
+        options:
+          - 30s
+          - 60s
+          - 120s
+      high_load_acknowledgement:
+        description: For 1,000+ RPS, enter I_APPROVE_AUTHORIZED_STAGING_LOAD_TEST
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: attendance-staging-load-test
+  cancel-in-progress: false
+
+jobs:
+  validate-target:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Validate staging target and load guardrails
+        env:
+          API_BASE_URL: ${{ inputs.api_base_url }}
+          TEST_PATH: ${{ inputs.test_path }}
+          TARGET_RPS: ${{ inputs.target_rps }}
+          TARGET_DURATION: ${{ inputs.target_duration }}
+          HIGH_LOAD_ACK: ${{ inputs.high_load_acknowledgement }}
+          STAGING_BEARER_TOKENS: ${{ secrets.STAGING_BEARER_TOKENS }}
+        run: |
+          node <<'NODE'
+          const fail = (message) => { console.error(message); process.exit(1); };
+          let url;
+          try { url = new URL(process.env.API_BASE_URL); }
+          catch { fail("api_base_url must be a valid HTTPS URL ending in /api/v1."); }
+          if (url.protocol !== "https:") fail("Load testing is HTTPS-only.");
+          if (!url.hostname.toLowerCase().includes("staging")) fail("Refusing load test: the hostname must explicitly contain 'staging'.");
+          if (url.pathname.replace(/\/+$/, "") !== "/api/v1" || url.search || url.hash) {
+            fail("api_base_url must end in exactly /api/v1 and have no query or fragment.");
+          }
+          if (!["/livez", "/health", "/auth/me"].includes(process.env.TEST_PATH)) fail("Unsafe test_path.");
+          if (!["50", "100", "300", "1000", "3000"].includes(process.env.TARGET_RPS)) fail("Unsupported target_rps.");
+          if (!["30s", "60s", "120s"].includes(process.env.TARGET_DURATION)) fail("Unsupported target_duration.");
+          if (Number(process.env.TARGET_RPS) >= 1000 && process.env.HIGH_LOAD_ACK !== "I_APPROVE_AUTHORIZED_STAGING_LOAD_TEST") {
+            fail("For 1,000+ RPS, explicitly enter I_APPROVE_AUTHORIZED_STAGING_LOAD_TEST.");
+          }
+          if (process.env.TEST_PATH === "/auth/me" && !String(process.env.STAGING_BEARER_TOKENS || "").trim()) {
+            fail("TEST_PATH=/auth/me requires the STAGING_BEARER_TOKENS Actions secret with dedicated synthetic-user tokens.");
+          }
+          console.log("Target guardrails passed. Endpoint:", process.env.TEST_PATH, "target RPS:", process.env.TARGET_RPS);
+          NODE
+
+  load-test:
+    needs: validate-target
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+      - name: Install k6
+        uses: grafana/setup-k6-action@v1
+        with:
+          version: v2.3.0
+      - name: Run gradual read-only staging load test
+        env:
+          BASE_URL: ${{ inputs.api_base_url }}
+          TEST_PATH: ${{ inputs.test_path }}
+          TARGET_RPS: ${{ inputs.target_rps }}
+          TARGET_DURATION: ${{ inputs.target_duration }}
+          STAGING_BEARER_TOKENS: ${{ secrets.STAGING_BEARER_TOKENS }}
+        run: k6 run --summary-export=load-test-summary.json load-tests/attendance-k6.js
+      - name: Publish sanitized load-test metrics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: attendance-staging-load-test-summary
+          path: load-test-summary.json
+          if-no-files-found: ignore
+          retention-days: 14
