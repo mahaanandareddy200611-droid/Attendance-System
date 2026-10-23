@@ -15,6 +15,21 @@ const ALLOWED_RATES = new Set([50, 100, 300, 1000, 3000]);
 const ALLOWED_DURATIONS = new Set(["30s", "60s", "120s"]);
 
 if (!BASE_URL) throw new Error("BASE_URL is required.");
+let parsedBase;
+try {
+  parsedBase = new URL(BASE_URL);
+} catch {
+  throw new Error("BASE_URL must be a valid HTTPS staging API base ending in /api/v1.");
+}
+if (parsedBase.protocol !== "https:") {
+  throw new Error("The load test is HTTPS-only.");
+}
+if (!parsedBase.hostname.toLowerCase().includes("staging")) {
+  throw new Error("Refusing to load test a non-staging hostname.");
+}
+if (parsedBase.pathname.replace(/\\/+$/, "") !== "/api/v1" || parsedBase.search || parsedBase.hash) {
+  throw new Error("BASE_URL must end in exactly /api/v1 and have no query or fragment.");
+}
 if (!ALLOWED_PATHS.has(TEST_PATH)) {
   throw new Error("TEST_PATH must be /livez, /health, or /auth/me. Write endpoints are deliberately excluded.");
 }
