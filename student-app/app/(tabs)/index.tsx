@@ -102,10 +102,6 @@ export default function CheckInScreen() {
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState("");
-  const [deviceId, setDeviceId] = useState("");
-  const [deviceReady, setDeviceReady] = useState(false);
-  const [deviceConflict, setDeviceConflict] = useState("");
-  const [deviceBusy, setDeviceBusy] = useState(false);
   const [biometricStatus, setBiometricStatus] = useState("MISSING");
   const [biometricBusy, setBiometricBusy] = useState(false);
   const [faceConsentAccepted, setFaceConsentAccepted] = useState(false);
@@ -612,26 +608,49 @@ export default function CheckInScreen() {
               <Text style={styles.link}>{loading ? "Refreshing…" : "Refresh"}</Text>
             </Pressable>
           </View>
-          <SetupRow title="Phone device key" detail={deviceReady ? "Registered and active" : deviceConflict ? "Another device is registered" : "Not registered"} ready={deviceReady} />
-          <SetupRow title="Face enrollment" detail={biometricStatus === "ACTIVE" ? "Enrolled" : biometricStatus === "DELETE_PENDING" ? "Deletion pending; check-in disabled" : "Not enrolled"} ready={biometricStatus === "ACTIVE"} />
-          <SetupRow title="Location" detail={locationEvidence ? "Accuracy approximately " + Math.round(locationEvidence.accuracyMeters) + " m" : "Capture before the QR scan"} ready={Boolean(locationEvidence)} />
-          {!deviceReady && (
-            <Pressable style={[styles.button, deviceBusy && styles.buttonDisabled]} disabled={deviceBusy} onPress={() => void registerDevice(false)}>
-              <Text style={styles.buttonText}>{deviceBusy ? "Registering…" : deviceConflict ? "Replace registered device…" : "Register this phone"}</Text>
-            </Pressable>
-          )}
-          {deviceConflict ? (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>Registered device: {deviceConflict}. Replacing it revokes the currently active device so only this phone can submit attendance.</Text>
-              <Pressable style={styles.dangerButton} disabled={deviceBusy} onPress={() => void registerDevice(true)}>
-                <Text style={styles.buttonText}>{deviceBusy ? "Replacing…" : "Confirm replacement"}</Text>
+          <SetupRow
+            title="Face enrollment"
+            detail={biometricStatus === "ACTIVE"
+              ? "Approved and active"
+              : biometricStatus === "PENDING_APPROVAL"
+                ? "Waiting for lecturer approval"
+                : biometricStatus === "DELETE_PENDING"
+                  ? "Deletion pending; check-in disabled"
+                  : "Enrollment required"}
+            ready={biometricStatus === "ACTIVE"}
+          />
+          {!["ACTIVE", "PENDING_APPROVAL", "DELETE_PENDING"].includes(biometricStatus) ? (
+            <View style={styles.faceConsentPanel}>
+              <Pressable
+                style={styles.consentRow}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: faceConsentAccepted }}
+                onPress={() => setFaceConsentAccepted((checked) => !checked)}
+              >
+                <View style={[styles.consentBox, faceConsentAccepted && styles.consentBoxChecked]}>
+                  {faceConsentAccepted ? <Text style={styles.consentCheckmark}>✓</Text> : null}
+                </View>
+                <Text style={styles.consentText}>
+                  I agree to face processing for attendance. After I start enrollment, the front camera preview remains visible and one live image is captured automatically. The provider creates the face profile used for matching; the attendance database stores a profile reference and consent metadata, not a raw face image or vector.
+                </Text>
               </Pressable>
+              <Pressable
+                style={[styles.button, (!faceConsentAccepted || busy || biometricBusy) && styles.buttonDisabled]}
+                disabled={!faceConsentAccepted || busy || biometricBusy}
+                onPress={() => void openEnrollmentCamera()}
+              >
+                <Text style={styles.buttonText}>{biometricBusy ? "Submitting enrollment…" : "Start camera and enroll automatically"}</Text>
+              </Pressable>
+              <Text style={styles.footnote}>A lecturer or administrator must approve this enrollment before attendance is enabled.</Text>
             </View>
           ) : null}
-          {biometricStatus !== "ACTIVE" && biometricStatus !== "DELETE_PENDING" ? (
-            <Pressable style={styles.button} disabled={busy || biometricBusy} onPress={() => void openEnrollmentCamera()}>
-              <Text style={styles.buttonText}>{biometricBusy ? "Enrolling…" : "Capture face enrollment"}</Text>
-            </Pressable>
+          {biometricStatus === "PENDING_APPROVAL" ? (
+            <View style={styles.notice}>
+              <Text style={styles.noticeText}>Your face enrollment is waiting for review. Do not submit it again; attendance stays disabled until an authorized lecturer or administrator approves it.</Text>
+              <Pressable style={styles.secondaryButton} disabled={loading} onPress={() => void reloadData()}>
+                <Text style={styles.secondaryButtonText}>Refresh approval status</Text>
+              </Pressable>
+            </View>
           ) : null}
           {biometricStatus === "ACTIVE" ? (
             <Pressable style={styles.secondaryButton} disabled={biometricBusy} onPress={removeFace}>
@@ -671,32 +690,36 @@ export default function CheckInScreen() {
         {selectedSession && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Check in: {selectedSession.courseCode || "Course"} · {selectedSession.section || "Section"}</Text>
-            <Text style={styles.subtitle}>Prepare location first. Complete the server&apos;s randomized center/left/right camera sequence. Once it passes, the QR scanner opens and submits automatically after reading the selected session&apos;s fresh QR.</Text>
+            <Text style={styles.subtitle}>Scan the lecturer&apos;s current QR first. Once the server validates it, the app automatically captures visible live-camera frames for face matching and liveness, then saves attendance.</Text>
             <Pressable
-              style={styles.secondaryButton}
-              disabled={busy}
-              onPress={() => void captureLocation()}
+              style={[styles.button, (biometricStatus !== "ACTIVE" || busy || cameraMode !== "none") && styles.buttonDisabled]}
+              disabled={biometricStatus !== "ACTIVE" || busy || cameraMode !== "none"}
+              onPress={() => void openScanner()}
             >
-              <Text style={styles.secondaryButtonText}>{busy && !locationEvidence ? "Getting location…" : locationEvidence ? "Refresh location" : "Get current location"}</Text>
+              <Text style={styles.buttonText}>{busy ? "Processing check-in…" : "Scan QR and check in"}</Text>
             </Pressable>
-            {locationEvidence ? (
-              <Text style={styles.footnote}>Captured {new Date(locationEvidence.capturedAt).toLocaleTimeString()} · accuracy ±{Math.round(locationEvidence.accuracyMeters)} m</Text>
+            {validationTicket && !assertionId && !pendingAttempt ? (
+              <Notice message="QR verified. Follow the live camera prompts; face and liveness frames are captured automatically." kind="info" />
             ) : null}
-            <Pressable
-              style={[styles.button, (!deviceReady || biometricStatus !== "ACTIVE" || !locationEvidence || busy) && styles.buttonDisabled]}
-              disabled={!deviceReady || biometricStatus !== "ACTIVE" || !locationEvidence || busy}
-              onPress={() => void startLiveness()}
-            >
-              <Text style={styles.buttonText}>{busy ? "Please wait…" : "Start face & liveness check"}</Text>
-            </Pressable>
-            {assertionId && cameraMode === "none" ? (
-              <Text style={styles.successText}>Liveness passed. Scan the current QR to submit attendance.</Text>
+            {assertionId && validationTicket ? (
+              <Text style={styles.successText}>Face match and liveness passed. Attendance is being saved automatically.</Text>
+            ) : null}
+            {validationTicket && !activeChallenge && !assertionId && !pendingAttempt && cameraMode === "none" && !busy ? (
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => {
+                  autoStartedTicketId.current = validationTicket.validationId;
+                  void startLiveness();
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Retry face verification for this QR</Text>
+              </Pressable>
             ) : null}
             {pendingAttempt ? (
               <View style={styles.warningBox}>
-                <Text style={styles.warningText}>The last request may have committed even though the response was lost. Retry the same idempotency key to recover its result.</Text>
+                <Text style={styles.warningText}>The server has not confirmed this attendance attempt. Retry with the same idempotency key so the result can be recovered safely.</Text>
                 <Pressable style={styles.button} disabled={busy} onPress={() => void executeAttendanceAttempt(pendingAttempt)}>
-                  <Text style={styles.buttonText}>{busy ? "Retrying…" : "Retry previous attempt safely"}</Text>
+                  <Text style={styles.buttonText}>{busy ? "Retrying…" : "Retry attendance safely"}</Text>
                 </Pressable>
               </View>
             ) : null}
@@ -715,6 +738,9 @@ export default function CheckInScreen() {
                   setCameraReady(false);
                   scannerLock.current = false;
                   captureLock.current = false;
+                  automaticLivenessCapture.current = false;
+                  setEnrollmentCountdown(null);
+                  setLivenessCountdown(null);
                   if (cameraMode === "liveness") {
                     void deleteTemporaryPhotos(frameUris);
                     setFrameUris([]);
@@ -736,19 +762,19 @@ export default function CheckInScreen() {
             />
             {cameraMode === "enroll" ? (
               <View style={styles.cameraActions}>
-                <Text style={styles.muted}>Face the camera straight on in good light. The photo is submitted to the provider for enrollment and removed from the temporary cache afterwards.</Text>
-                <Pressable style={styles.button} disabled={!cameraReady || busy} onPress={() => void captureEnrollment()}>
-                  <Text style={styles.buttonText}>{busy || biometricBusy ? "Working…" : "Capture and enroll face"}</Text>
-                </Pressable>
+                <Text style={styles.muted}>Keep your full face inside the live preview. The camera indicator remains visible while the image is captured and sent for enrollment.</Text>
+                <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · AUTOMATIC CAPTURE" : "STARTING CAMERA…"}</Text>
+                {enrollmentCountdown !== null ? <Text style={styles.countdownText}>Capturing enrollment in {enrollmentCountdown}… keep your face visible.</Text> : null}
+                {busy || biometricBusy ? <Text style={styles.muted}>Submitting the enrollment image securely…</Text> : null}
               </View>
             ) : cameraMode === "liveness" && activeChallenge && activeStep ? (
               <View style={styles.cameraActions}>
                 <Text style={styles.eyebrow}>STEP {frameUris.length + 1} OF 3</Text>
                 <Text style={styles.cardTitle}>{activeStep.instruction}</Text>
-                <Text style={styles.muted}>Follow the instruction and keep your face visible. The server checks frame order and provider liveness signals. A failed challenge must be restarted.</Text>
-                <Pressable style={styles.button} disabled={!cameraReady || busy} onPress={() => void captureLivenessFrame()}>
-                  <Text style={styles.buttonText}>{busy ? "Checking…" : "Capture frame " + (frameUris.length + 1)}</Text>
-                </Pressable>
+                <Text style={styles.muted}>Follow the instruction and keep your full face visible. The live preview stays on, and the camera captures each frame automatically.</Text>
+                <Text style={styles.cameraStatus}>CAMERA ACTIVE · LIVE MATCH + LIVENESS</Text>
+                {livenessCountdown !== null ? <Text style={styles.countdownText}>Capturing frame {frameUris.length + 1} in {livenessCountdown}…</Text> : null}
+                {busy ? <Text style={styles.muted}>Checking the captured frame…</Text> : null}
               </View>
             ) : cameraMode === "scan" ? (
               <View style={styles.cameraActions}>
@@ -814,6 +840,14 @@ const styles = StyleSheet.create({
   sessionTitle: { color: "#1c2942", fontWeight: "800", fontSize: 14, marginBottom: 4 },
   setupRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 5 },
   setupTitle: { color: "#253250", fontSize: 13, fontWeight: "800", marginBottom: 3 },
+  faceConsentPanel: { gap: 10, borderRadius: 14, padding: 12, backgroundColor: "#f6f8fd", borderWidth: 1, borderColor: "#dce3f1" },
+  consentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  consentBox: { width: 21, height: 21, borderRadius: 6, borderWidth: 1.5, borderColor: "#9aa8bf", backgroundColor: "#ffffff", alignItems: "center", justifyContent: "center", marginTop: 2 },
+  consentBoxChecked: { borderColor: "#359c8b", backgroundColor: "#d9f5ef" },
+  consentCheckmark: { color: "#167c6d", fontWeight: "900", fontSize: 14 },
+  consentText: { flex: 1, color: "#4e5d77", fontSize: 12, lineHeight: 18 },
+  cameraStatus: { color: "#148879", fontSize: 10, letterSpacing: 1.4, fontWeight: "900" },
+  countdownText: { color: "#176d67", fontSize: 12, fontWeight: "800", lineHeight: 18 },
   dot: { width: 11, height: 11, borderRadius: 6, backgroundColor: "#cad1de" },
   dotReady: { backgroundColor: "#2ea36b" },
   muted: { color: "#6f7a91", fontSize: 13, lineHeight: 19 },
