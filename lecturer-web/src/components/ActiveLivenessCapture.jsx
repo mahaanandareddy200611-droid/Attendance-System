@@ -22,20 +22,37 @@ export default function ActiveLivenessCapture({
 }) {
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const autoStartedRef = useRef(false);
+  const captureInProgressRef = useRef(false);
   const [challenge, setChallenge] = useState(null);
   const [frames, setFrames] = useState([]);
   const [currentStep, setCurrentStep] = useState(0);
   const [cameraActive, setCameraActive] = useState(false);
+  const [cameraReady, setCameraReady] = useState(false);
+  const [captureCountdown, setCaptureCountdown] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
 
   useEffect(() => {
-    if (cameraActive && videoRef.current && streamRef.current) {
-      videoRef.current.srcObject = streamRef.current;
-      videoRef.current.play().catch(() => {
-        setMessage("Camera playback was blocked. Allow camera permission and try again.");
-      });
-    }
+    const video = videoRef.current;
+    const stream = streamRef.current;
+    if (!cameraActive || !video || !stream) return undefined;
+
+    const markReady = () => {
+      setCameraReady(video.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA && video.videoWidth > 0 && video.videoHeight > 0);
+    };
+    video.srcObject = stream;
+    video.addEventListener("loadedmetadata", markReady);
+    video.addEventListener("canplay", markReady);
+    video.play().then(markReady).catch(() => {
+      setMessage("Camera preview could not start. Check the browser camera permission and retry.");
+    });
+    markReady();
+    return () => {
+      video.removeEventListener("loadedmetadata", markReady);
+      video.removeEventListener("canplay", markReady);
+      video.srcObject = null;
+    };
   }, [cameraActive]);
 
   useEffect(() => () => stopStream(streamRef.current), []);
@@ -44,6 +61,9 @@ export default function ActiveLivenessCapture({
     stopStream(streamRef.current);
     streamRef.current = null;
     setCameraActive(false);
+    setCameraReady(false);
+    setCaptureCountdown(null);
+    captureInProgressRef.current = false;
     setChallenge(null);
     setFrames([]);
     setCurrentStep(0);
@@ -54,6 +74,7 @@ export default function ActiveLivenessCapture({
       setMessage("Camera liveness requires HTTPS (or localhost) and browser camera support.");
       return;
     }
+    if (disabled || busy) return;
     setBusy(true);
     setMessage("");
     reset();
@@ -73,7 +94,7 @@ export default function ActiveLivenessCapture({
       setFrames([]);
       setCurrentStep(0);
       setCameraActive(true);
-      setMessage("Camera is live. Follow each server-issued instruction and capture one clear frame per step.");
+      setMessage("Face verification is running. Follow the visible prompt; frames are captured automatically while the camera indicator is on.");
     } catch (error) {
       stopStream(streamRef.current);
       streamRef.current = null;
@@ -89,6 +110,8 @@ export default function ActiveLivenessCapture({
     if (!video || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA ||
         !video.videoWidth || !video.videoHeight) {
       setMessage("Camera is still starting. Wait a moment and try again.");
+      captureInProgressRef.current = false;
+      setCaptureCountdown(null);
       return;
     }
 
@@ -122,7 +145,7 @@ export default function ActiveLivenessCapture({
       if (currentStep < 2) {
         setFrames(nextFrames);
         setCurrentStep(currentStep + 1);
-        setMessage("Frame captured. Follow the next instruction.");
+        setMessage("Frame captured. Follow the next on-screen instruction; the next frame will be captured automatically.");
         return;
       }
 
@@ -150,9 +173,41 @@ export default function ActiveLivenessCapture({
       // Challenges are single-use; a failed attempt must obtain a new challenge.
       reset();
     } finally {
+      captureInProgressRef.current = false;
+      setCaptureCountdown(null);
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (!sessionId || disabled || busy || autoStartedRef.current) return;
+    autoStartedRef.current = true;
+    void start();
+    // start() is intentionally started once when a valid QR reveals this component.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [sessionId, disabled]);
+
+  useEffect(() => {
+    if (!cameraActive || !cameraReady || !challenge || disabled || busy || captureInProgressRef.current) return undefined;
+
+    captureInProgressRef.current = true;
+    setCaptureCountdown(2);
+    const interval = window.setInterval(() => {
+      setCaptureCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+    }, 1000);
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval);
+      setCaptureCountdown(null);
+      void captureFrame();
+    }, 2100);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+    // captureFrame is refreshed with the latest step/frame state; this effect is
+    // keyed to the step and starts exactly one timer for each visible prompt.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraActive, cameraReady, challenge?.challengeId, currentStep, disabled, busy]);
 
   const step = challenge?.steps?.[currentStep];
 
@@ -160,7 +215,7 @@ export default function ActiveLivenessCapture({
     <section className="student-setup-item active-liveness-capture">
       <div className="student-setup-copy">
         <strong>Active face and liveness check</strong>
-        <span>Capture a center frame and follow the server's randomized left/right turn instructions.</span>
+        <span>After a valid QR, the camera check starts automatically. You will see each prompt and a live-camera indicator; no shutter button is needed.</span>
       </div>
       {cameraActive && (
         <>
@@ -177,23 +232,22 @@ export default function ActiveLivenessCapture({
               Step {currentStep + 1} of 3: {step.instruction}
             </div>
           )}
-          <p className="academic-footnote">
-            Captured frames are sent for verification and are not retained by this component.
-          </p>
+          <p className="camera-live-indicator">Camera active · frame capture and face/liveness matching are in progress</p>
+          {captureCountdown !== null && <p className="academic-footnote" role="status">Next frame in {captureCountdown}… Follow the prompt and keep your face visible.</p>}
+          <p className="academic-footnote">Three brief live frames are sent to the configured biometric provider for matching and active-liveness checks. The camera stops when the check finishes or you stop it.</p>
         </>
       )}
       {message && <p className="academic-footnote" role="status">{message}</p>}
       {!cameraActive ? (
-        <button type="button" className="academic-button" onClick={start} disabled={disabled || busy || !sessionId}>
-          {busy ? "Starting…" : "Start face/liveness check"}
-        </button>
+        <div className="active-liveness-actions">
+          <p className="academic-footnote" role="status">{busy ? "Starting the camera and preparing the secure check…" : message || "The check will start automatically after QR validation."}</p>
+          {!busy && <button type="button" className="academic-button" onClick={() => { autoStartedRef.current = false; void start(); }} disabled={disabled || !sessionId}>Retry face verification</button>}
+        </div>
       ) : (
         <div className="active-liveness-actions">
-          <button type="button" className="academic-button" onClick={captureFrame} disabled={disabled || busy}>
-            {busy ? "Processing…" : `Capture frame ${currentStep + 1} of 3`}
-          </button>
-          <button type="button" className="academic-button secondary" onClick={reset} disabled={busy}>
-            Cancel
+          <span className="academic-footnote" role="status">{busy ? "Checking the current frame…" : "Capturing automatically after each prompt."}</span>
+          <button type="button" className="academic-button secondary" onClick={reset} disabled={busy || disabled}>
+            Stop verification
           </button>
         </div>
       )}
