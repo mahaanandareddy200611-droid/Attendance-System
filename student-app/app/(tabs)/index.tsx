@@ -188,7 +188,7 @@ export default function CheckInScreen() {
     setBusy(true);
     let imageUri = "";
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.82, exif: false, base64: false });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.58, exif: false, base64: false });
       if (!photo?.uri) throw new Error("The camera did not return an image.");
       imageUri = photo.uri;
       setCameraMode("none");
@@ -305,7 +305,7 @@ export default function CheckInScreen() {
     setBusy(true);
     let newUris: string[] = [];
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.78, exif: false, base64: false });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.58, exif: false, base64: false });
       if (!photo?.uri) throw new Error("The camera did not return a frame.");
       newUris = [...frameUris, photo.uri];
       setFrameUris(newUris);
@@ -799,6 +799,15 @@ export default function CheckInScreen() {
               style={styles.camera}
               facing={cameraMode === "scan" ? "back" : "front"}
               onCameraReady={() => setCameraReady(true)}
+              onMountError={(event) => {
+                setCameraReady(false);
+                showNotice(
+                  event?.message
+                    ? "Camera could not start: " + event.message + ". Check camera permission and close other apps using the camera."
+                    : "Camera could not start. Check camera permission and close other apps using the camera.",
+                  "error",
+                );
+              }}
               barcodeScannerSettings={cameraMode === "scan" ? { barcodeTypes: ["qr"] } : undefined}
               onBarcodeScanned={cameraMode === "scan" ? (result) => void onQrScanned(result.data) : undefined}
             />

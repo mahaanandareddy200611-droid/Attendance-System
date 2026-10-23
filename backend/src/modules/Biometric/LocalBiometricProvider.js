@@ -209,16 +209,29 @@ exports.enroll =
             });
 
 
-        if (
-            !result?.person?.id
-        ) {
-
-            throw new AppError(
-                "Biometric enrollment failed",
-                502
-            );
+        if (!result?.person?.id) {
+            throw new AppError("Biometric enrollment failed", 502);
         }
 
+        const acceptedFaces = Array.isArray(result.faces) ? result.faces.length : 0;
+        const rejectedImages = Array.isArray(result.rejected_images) ? result.rejected_images : [];
+        if (acceptedFaces !== 1 || rejectedImages.length > 0) {
+            const error = new AppError(
+                acceptedFaces === 0
+                    ? "No usable face was detected. Use one clear, well-lit live selfie with your face centered."
+                    : "Enrollment requires exactly one clear face and an image accepted by the biometric provider.",
+                422
+            );
+
+            try {
+                await exports.deletePerson({ providerUserId: String(result.person.id) });
+            } catch {
+                error.statusCode = 503;
+                error.message = "The enrollment image was rejected and provider cleanup is pending. Refresh enrollment status before retrying.";
+                error.cleanupProviderUserId = String(result.person.id);
+            }
+            throw error;
+        }
 
         return {
             providerUserId:

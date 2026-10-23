@@ -356,9 +356,24 @@ exports.sweepExpiredMediaAssets = async ({ limit = 25 } = {}) => {
       result.deleted += 1;
     } catch (error) {
       result.failed += 1;
+      const message = String(error?.message || "");
+      const fallbackCode = /not configured/i.test(message)
+        ? "STORAGE_NOT_CONFIGURED"
+        : /endpoint/i.test(message)
+          ? "STORAGE_ENDPOINT_INVALID"
+          : /bucket/i.test(message)
+            ? "STORAGE_BUCKET_INVALID"
+            : /region/i.test(message)
+              ? "STORAGE_REGION_INVALID"
+              : "STORAGE_APPLICATION_ERROR";
       console.error("Expired media cleanup failed", {
         assetId: String(asset._id),
         errorName: error?.name || "Error",
+        statusCode: Number.isInteger(error?.statusCode) ? error.statusCode : undefined,
+        storageStatus: Number.isInteger(error?.storageStatus) ? error.storageStatus : undefined,
+        storageCode: typeof error?.storageCode === "string" ? error.storageCode : fallbackCode,
+        ...(typeof error?.storageCauseCode === "string" ? { storageCauseCode: error.storageCauseCode } : {}),
+        ...(typeof error?.storageCauseName === "string" ? { storageCauseName: error.storageCauseName } : {}),
       });
     }
   }
