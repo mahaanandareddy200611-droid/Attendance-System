@@ -5,6 +5,12 @@ const BASE_URL = String(__ENV.BASE_URL || "").replace(/\/+$/, "");
 const TEST_PATH = String(__ENV.TEST_PATH || "/livez");
 const TARGET_RPS = Number(__ENV.TARGET_RPS || 100);
 const TARGET_DURATION = String(__ENV.TARGET_DURATION || "30s");
+const DEFAULT_STAGING_HOSTS = ["attendance-backend-staging-n04q.onrender.com"];
+const CONFIGURED_STAGING_HOSTS = String(__ENV.ALLOWED_STAGING_HOSTS || "")
+  .split(/[\r\n,]+/)
+  .map((value) => value.trim().toLowerCase())
+  .filter(Boolean);
+const ALLOWED_STAGING_HOSTS = CONFIGURED_STAGING_HOSTS.length ? CONFIGURED_STAGING_HOSTS : DEFAULT_STAGING_HOSTS;
 const AUTH_TOKEN_VALUES = String(__ENV.STAGING_BEARER_TOKENS || "")
   .split(/[\r\n,]+/)
   .map((value) => value.trim().replace(/^Bearer\s+/i, ""))
@@ -24,8 +30,12 @@ try {
 if (parsedBase.protocol !== "https:") {
   throw new Error("The load test is HTTPS-only.");
 }
-if (!parsedBase.hostname.toLowerCase().includes("staging")) {
+const targetHostname = parsedBase.hostname.toLowerCase();
+if (!targetHostname.includes("staging")) {
   throw new Error("Refusing to load test a non-staging hostname.");
+}
+if (!ALLOWED_STAGING_HOSTS.includes(targetHostname)) {
+  throw new Error("Refusing to load test a hostname not in STAGING_LOAD_TEST_ALLOWED_HOSTS.");
 }
 const basePath = parsedBase.pathname.endsWith("/") ? parsedBase.pathname.slice(0, -1) : parsedBase.pathname;
 if (basePath !== "/api/v1" || parsedBase.search || parsedBase.hash) {

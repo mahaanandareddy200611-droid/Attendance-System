@@ -5,9 +5,9 @@ This repository now includes a manually triggered, guarded k6 workflow. It exist
 ## First run
 
 1. Deploy the backend, Redis, MongoDB, and biometric provider to a dedicated **staging** environment. Check readiness and verify the service owner has authorized the test.
-2. In GitHub repository settings, add `STAGING_BEARER_TOKENS` only if testing `/auth/me`. The secret must contain a comma- or newline-separated pool of tokens for dedicated synthetic accounts; do not use student or administrator credentials. Keep the tokens valid for the test and rotate/revoke them afterward.
+2. The allowed target is restricted to `attendance-backend-staging-n04q.onrender.com` by default. If a different authorized staging hostname is needed after provisioning a scaled environment, set the repository variable `STAGING_LOAD_TEST_ALLOWED_HOSTS` to a comma- or newline-separated exact hostname allowlist. The hostname must include `staging`; do not add production hosts. In repository settings, add `STAGING_BEARER_TOKENS` only if testing `/auth/me`. That secret must contain a pool of tokens for dedicated synthetic accounts—not student or administrator credentials—and those tokens should be rotated/revoked after the test.
 3. Open **Actions → Staging Load Test → Run workflow**. Enter the HTTPS API base ending in `/api/v1`, start at `/livez` and 50 or 100 RPS, and inspect the summary before increasing load.
-4. The 1,000 and 3,000 RPS profiles require the exact acknowledgement `I_APPROVE_AUTHORIZED_STAGING_LOAD_TEST`. The workflow refuses non-HTTPS targets, hostnames that do not contain `staging`, write endpoints, and targets without the required token pool.
+4. The 1,000 and 3,000 RPS profiles require the exact acknowledgement `I_APPROVE_AUTHORIZED_STAGING_LOAD_TEST`. The workflow refuses non-HTTPS targets, hosts outside the exact staging allowlist, hostnames that do not contain `staging`, write endpoints, and targets without the required token pool.
 5. Review request rate, failed-request/check rate, p95/p99 latency, and server CPU/memory, Node event-loop delay, Mongo pool wait/checkout, Redis latency, provider latency, and 429/5xx logs. Attach the summary artifact to the release record.
 
 ## What this measures
