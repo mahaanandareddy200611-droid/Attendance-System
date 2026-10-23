@@ -24,6 +24,7 @@ export default function ActiveLivenessCapture({
   const streamRef = useRef(null);
   const autoStartedRef = useRef(false);
   const captureInProgressRef = useRef(false);
+  const challengeRequestedRef = useRef(false);
   const [challenge, setChallenge] = useState(null);
   const [frames, setFrames] = useState([]);
   const [currentStep, setCurrentStep] = useState(0);
@@ -58,6 +59,7 @@ export default function ActiveLivenessCapture({
   useEffect(() => () => stopStream(streamRef.current), []);
 
   const reset = () => {
+    challengeRequestedRef.current = false;
     stopStream(streamRef.current);
     streamRef.current = null;
     setCameraActive(false);
@@ -86,15 +88,15 @@ export default function ActiveLivenessCapture({
         video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
       });
       streamRef.current = stream;
-      const issued = await createActiveBiometricChallenge(sessionId);
-      if (!Array.isArray(issued.steps) || issued.steps.length !== 3) {
-        throw new Error("The server returned an invalid liveness sequence.");
-      }
-      setChallenge(issued);
+      // Render the actual live preview before requesting a short-lived challenge.
+      // Browser camera startup and rendering latency must not consume challenge TTL.
+      setChallenge(null);
       setFrames([]);
       setCurrentStep(0);
+      challengeRequestedRef.current = false;
+      setCameraReady(false);
       setCameraActive(true);
-      setMessage("Face verification is running. Follow the visible prompt; frames are captured automatically while the camera indicator is on.");
+      setMessage("Camera is active. The secure face/liveness check will begin when the preview is ready.");
     } catch (error) {
       stopStream(streamRef.current);
       streamRef.current = null;
@@ -104,6 +106,36 @@ export default function ActiveLivenessCapture({
       setBusy(false);
     }
   };
+
+  useEffect(() => {
+    if (
+      !cameraActive ||
+      !cameraReady ||
+      challenge ||
+      disabled ||
+      busy ||
+      !sessionId ||
+      challengeRequestedRef.current
+    ) return;
+
+    challengeRequestedRef.current = true;
+    setBusy(true);
+    void createActiveBiometricChallenge(sessionId)
+      .then((issued) => {
+        if (!Array.isArray(issued.steps) || issued.steps.length !== 3) {
+          throw new Error("The server returned an invalid liveness sequence.");
+        }
+        setChallenge(issued);
+        setFrames([]);
+        setCurrentStep(0);
+        setMessage("Face verification is running. Follow the visible prompt; frames are captured automatically while the camera indicator is on.");
+      })
+      .catch((error) => {
+        setMessage(explainCameraError(error));
+        reset();
+      })
+      .finally(() => setBusy(false));
+  }, [cameraActive, cameraReady, challenge, disabled, busy, sessionId]);
 
   const captureFrame = async () => {
     const video = videoRef.current;
