@@ -89,6 +89,8 @@ export default function CheckInScreen() {
   const automaticEnrollmentCapture = useRef(false);
   const automaticLivenessCapture = useRef(false);
   const autoStartedTicketId = useRef("");
+  const challengeStartedForTicket = useRef("");
+  const challengeRequestInFlight = useRef(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
