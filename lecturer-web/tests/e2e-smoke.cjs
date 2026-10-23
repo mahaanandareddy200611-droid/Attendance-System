@@ -162,14 +162,15 @@ test("student signup requires face consent and continues into automatic enrollme
   await page.getByLabel("Email").fill("sam.student@example.test");
   await page.getByLabel("Mobile number").fill("9876543210");
   await page.getByLabel("Password", { exact: true }).fill("SecureStudent123!");
+  await page.getByLabel(/Required face-enrollment consent/i).check();
   await page.getByLabel("Confirm password").fill("DifferentPassword123!");
   await page.getByRole("button", { name: "Sign Up" }).click();
   await page.getByRole("alert").waitFor();
   assert.match(await page.getByRole("alert").innerText(), /passwords do not match/i);
   assert.equal(calls.some((call) => call.path === "/auth/signup"), false);
   await page.getByLabel("Confirm password").fill("SecureStudent123!");
-  await page.getByRole("button", { name: "Sign Up" }).click();
-  assert.match(await page.getByRole("alert").innerText(), /face-enrollment notice/i);
+  await page.getByLabel(/Required face-enrollment consent/i).uncheck();
+  assert.equal(await page.getByRole("button", { name: "Sign Up" }).isDisabled(), true);
   assert.equal(calls.some((call) => call.path === "/auth/signup"), false);
   await page.getByLabel(/Required face-enrollment consent/i).check();
   await page.getByRole("button", { name: "Sign Up" }).click();
