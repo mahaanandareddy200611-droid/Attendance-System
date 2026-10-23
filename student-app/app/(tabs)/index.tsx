@@ -554,7 +554,7 @@ export default function CheckInScreen() {
   }, [validationTicket, assertionId, busy, pendingAttempt, executeAttendanceAttempt]);
 
   if (authLoading) {
-    return <View style={styles.center}><ActivityIndicator size="large" color="#3157d5" /><Text style={styles.muted}>Restoring secure student session…</Text></View>;
+    return <View style={styles.center}><ActivityIndicator size="large" color="#63d7bf" /><Text style={styles.muted}>Restoring secure student session…</Text></View>;
   }
 
   if (!user || !token) {
@@ -766,6 +766,7 @@ export default function CheckInScreen() {
                 {cameraMode === "enroll" ? "Face enrollment" : cameraMode === "liveness" ? "Active liveness" : "Scan current QR"}
               </Text>
               <Pressable
+                disabled={busy}
                 onPress={() => {
                   setCameraMode("none");
                   setCameraReady(false);
