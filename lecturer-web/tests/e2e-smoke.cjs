@@ -594,7 +594,7 @@ test("student must enroll before attendance and enrollment remains pending until
   await page.waitForURL(/\/student\/face-enrollment\?required=1$/);
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Start camera and enroll automatically" }).click();
-  await page.locator(".student-enrollment-camera video").waitFor({ state: "visible", timeout: 10000 });
+  await page.locator(".camera-modal video").waitFor({ state: "visible", timeout: 10000 });
   await page.getByText(/submitted for lecturer approval/i).waitFor({ timeout: 15000 });
   assert.equal(await page.getByRole("button", { name: /Retry face verification|Start face\/liveness check/i }).count(), 0);
   assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
@@ -635,8 +635,8 @@ test("student can submit face enrollment independently before an attendance QR e
   await page.getByRole("heading", { name: "Face enrollment" }).waitFor();
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Start camera and enroll automatically" }).click();
-  await page.locator(".student-enrollment-camera video").waitFor({ state: "visible", timeout: 10000 });
-  await page.locator(".student-enrollment-camera .camera-live-indicator").waitFor({ state: "visible", timeout: 10000 });
+  await page.locator(".camera-modal video").waitFor({ state: "visible", timeout: 10000 });
+  await page.locator(".camera-modal .camera-live-indicator").waitFor({ state: "visible", timeout: 10000 });
   await page.getByText(/submitted for lecturer approval/i).waitFor({ timeout: 15000 });
   assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
   assert.equal(calls.some((call) => call.path === "/attendance/validate-qr"), false, "enrollment must not require an attendance QR");

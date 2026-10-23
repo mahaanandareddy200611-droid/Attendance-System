@@ -199,3 +199,22 @@ test("rejects provider errors instead of treating them as success", async (t) =>
         assertStatus(503)
     );
 });
+
+
+test("maps biometric provider 5xx to a safe actionable message", async (t) => {
+    mockFetch(
+        t,
+        { message: "Unexpected error occurred", debug: "must not be exposed" },
+        { ok: false, status: 500 }
+    );
+
+    await assert.rejects(
+        verifyStudent(),
+        (error) => {
+            assert.equal(error.statusCode, 503);
+            assert.match(error.publicMessage, /temporarily unavailable/i);
+            assert.equal(error.message.includes("must not be exposed"), false);
+            return true;
+        }
+    );
+});

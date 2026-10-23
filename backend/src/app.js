@@ -299,7 +299,9 @@ app.use((err, req, res, next) => {
             code: errorCode,
             message:
                 statusCode >= 500
-                    ? "An unexpected error occurred"
+                    ? (typeof err.publicMessage === "string" && err.publicMessage.trim()
+                        ? err.publicMessage.trim()
+                        : "An unexpected error occurred")
                     : err.message
         },
         requestId: req.id

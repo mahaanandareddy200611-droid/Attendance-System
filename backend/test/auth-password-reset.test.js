@@ -148,3 +148,58 @@ test("exhausted OTP responses are generic and do not disclose recovery state", a
   );
   assert.equal(updates, 0, "exhausted OTP counters must not be incremented again");
 });
+
+
+test("forgot-password normalizes email and clears an OTP when email delivery is not configured", async (t) => {
+  const user = fakeUser({
+    _id: "user-mail-failure",
+    passwordResetOtpHash: null,
+    passwordResetOtpExpires: null,
+    passwordResetOtpAttempts: 0,
+    save: async () => {},
+  });
+  let lookupFilter;
+  let cleanupFilter;
+  let cleanupUpdate;
+  t.mock.method(User, "findOne", async (filter) => {
+    lookupFilter = filter;
+    return user;
+  });
+  t.mock.method(User, "updateOne", async (filter, update) => {
+    cleanupFilter = filter;
+    cleanupUpdate = update;
+    return { matchedCount: 1, modifiedCount: 1 };
+  });
+
+  const previous = {
+    user: process.env.MAIL_USER,
+    password: process.env.MAIL_PASSWORD,
+    host: process.env.MAIL_HOST,
+  };
+  process.env.MAIL_USER = "";
+  process.env.MAIL_PASSWORD = "";
+  process.env.MAIL_HOST = "";
+  t.after(() => {
+    for (const [key, value] of Object.entries({
+      MAIL_USER: previous.user,
+      MAIL_PASSWORD: previous.password,
+      MAIL_HOST: previous.host,
+    })) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  });
+
+  await assert.rejects(
+    authService.forgotPassword("  RESET-USER@EXAMPLE.COM "),
+    (error) => error.statusCode === 503 &&
+      /reset code was not sent/i.test(error.publicMessage || "") &&
+      !String(error.publicMessage).includes("123456"),
+  );
+  assert.deepEqual(lookupFilter, { email: TEST_EMAIL });
+  assert.equal(cleanupFilter._id, user._id);
+  assert.match(cleanupFilter.passwordResetOtpHash, /^[a-f0-9]{64}$/);
+  assert.equal(cleanupUpdate.$set.passwordResetOtpHash, null);
+  assert.equal(cleanupUpdate.$set.passwordResetOtpExpires, null);
+  assert.equal(cleanupUpdate.$set.passwordResetOtpAttempts, 0);
+});
