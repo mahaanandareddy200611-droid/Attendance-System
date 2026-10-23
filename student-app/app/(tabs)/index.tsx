@@ -836,7 +836,7 @@ function Notice({ message, kind }: { message: string; kind: "info" | "success" |
   return (
     <View
       style={[styles.notice, kind === "success" ? styles.noticeSuccess : kind === "error" ? styles.noticeError : null]}
-      accessibilityRole={kind === "error" ? "alert" : "status"}
+      accessibilityRole={kind === "error" ? "alert" : undefined}
       accessibilityLiveRegion={kind === "error" ? "assertive" : "polite"}
     >
       <Text style={styles.noticeText}>{message}</Text>
