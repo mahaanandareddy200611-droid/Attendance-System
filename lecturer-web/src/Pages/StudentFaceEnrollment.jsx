@@ -32,8 +32,15 @@ function stopStream(stream) {
 
 export default function StudentFaceEnrollment() {
   const { user } = useAuth();
+  const params = new URLSearchParams(window.location.search);
+  const requiredEnrollment = params.get("required") === "1";
+  const consentFromSignup = params.get("consent") === "face-attendance-v1";
+  const [consentGiven, setConsentGiven] = useState(consentFromSignup);
+  const consentAccepted = consentFromSignup || consentGiven;
   const videoRef = useRef(null);
   const streamRef = useRef(null);
+  const autoCameraStartedRef = useRef(false);
+  const autoCaptureStartedRef = useRef(false);
   const [stream, setStream] = useState(null);
   const [cameraReady, setCameraReady] = useState(false);
   const [cameraBusy, setCameraBusy] = useState(false);
@@ -41,6 +48,7 @@ export default function StudentFaceEnrollment() {
   const [statusLoading, setStatusLoading] = useState(true);
   const [enrollment, setEnrollment] = useState(null);
   const [notice, setNotice] = useState(null);
+  const [autoCaptureCountdown, setAutoCaptureCountdown] = useState(null);
 
   useEffect(() => {
     let active = true;
@@ -58,6 +66,12 @@ export default function StudentFaceEnrollment() {
       streamRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timeout = window.setTimeout(() => setNotice(null), 7000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   useEffect(() => {
     const video = videoRef.current;
@@ -92,6 +106,11 @@ export default function StudentFaceEnrollment() {
 
   const startCamera = async () => {
     if (cameraBusy || submitBusy) return;
+    if (!consentAccepted) {
+      setNotice({ type: "error", text: "Review and accept the face-enrollment notice before enabling the camera." });
+      return;
+    }
+    autoCaptureStartedRef.current = false;
     setNotice(null);
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setNotice({ type: "error", text: "Face enrollment needs HTTPS (or localhost) and browser camera support." });
@@ -114,6 +133,50 @@ export default function StudentFaceEnrollment() {
       setCameraBusy(false);
     }
   };
+
+  useEffect(() => {
+    useEffect(() => {
+    const state = enrollment?.status || "NOT_ENROLLED";
+    if (
+      !stream ||
+      !cameraReady ||
+      !consentAccepted ||
+      statusLoading ||
+      ["ACTIVE", "PENDING_APPROVAL", "DELETE_PENDING"].includes(state) ||
+      autoCaptureStartedRef.current
+    ) return undefined;
+
+    // Once the visible live preview is ready, capture automatically after a short
+    // on-screen countdown; no shutter press is required. The stream stays visible.
+    autoCaptureStartedRef.current = true;
+    setAutoCaptureCountdown(2);
+    const interval = window.setInterval(() => {
+      setAutoCaptureCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+    }, 1000);
+    const timeout = window.setTimeout(() => {
+      window.clearInterval(interval);
+      setAutoCaptureCountdown(null);
+      void submitEnrollment();
+    }, 2100);
+    return () => {
+      window.clearInterval(interval);
+      window.clearTimeout(timeout);
+    };
+  }, [stream, cameraReady, consentAccepted, statusLoading, enrollment?.status]);
+
+  const state = enrollment?.status || "NOT_ENROLLED";
+    if (
+      !requiredEnrollment ||
+      !consentFromSignup ||
+      statusLoading ||
+      cameraBusy ||
+      submitBusy ||
+      ["ACTIVE", "PENDING_APPROVAL", "DELETE_PENDING"].includes(state) ||
+      autoCameraStartedRef.current
+    ) return;
+    autoCameraStartedRef.current = true;
+    void startCamera();
+  }, [requiredEnrollment, consentFromSignup, statusLoading, cameraBusy, submitBusy, enrollment?.status]);
 
   const refreshStatus = async () => {
     setStatusLoading(true);
@@ -194,7 +257,7 @@ export default function StudentFaceEnrollment() {
           <span className="academic-role">{user?.name || "Student"}</span>
         </div>
 
-        {notice && <div className={"academic-notice " + notice.type} role={notice.type === "error" ? "alert" : "status"}>{notice.text}</div>}
+        {notice && <div className={"academic-notice academic-toast " + notice.type} role={notice.type === "error" ? "alert" : "status"} aria-live={notice.type === "error" ? "assertive" : "polite"}>{notice.text}</div>}
 
         <section className="academic-card">
           <div className="academic-card-title">
@@ -226,14 +289,28 @@ export default function StudentFaceEnrollment() {
             </div>}
 
           {state !== "ACTIVE" && state !== "PENDING_APPROVAL" && state !== "DELETE_PENDING" && (
+            {!consentFromSignup && (
+              <label className="academic-consent">
+                <input type="checkbox" checked={consentGiven} onChange={(event) => setConsentGiven(event.target.checked)} />
+                <span><strong>Consent to face processing.</strong> Your live camera image is sent to the configured biometric provider to create a face profile for attendance matching. The app database stores the provider profile reference and consent metadata, not the raw image or face vector. The camera stays visibly active while capture or verification is running.</span>
+              </label>
+            )}
             <div className="student-setup-item student-enrollment-camera">
-              <div className="student-setup-copy"><strong>Live front-camera capture</strong><span>Keep the camera image clear and do not upload an unrelated photo. Only submit a real enrollment image for your own account.</span></div>
+              <div className="student-setup-copy"><strong>Secure live-camera enrollment</strong><span>Keep your full face centered in steady lighting. After you agree and the live preview is ready, one enrollment frame is captured automatically.</span></div>
               {stream && <video ref={videoRef} className="active-liveness-video" autoPlay playsInline muted aria-label="Live front-camera preview for face enrollment" />}
-              {!stream ? <button type="button" className="academic-button" onClick={() => void startCamera()} disabled={isBusy}>{cameraBusy ? "Opening camera…" : "Open front camera"}</button> : <div className="active-liveness-actions">
-                <button type="button" className="academic-button" onClick={() => void submitEnrollment()} disabled={!cameraReady || isBusy}>{submitBusy ? "Submitting…" : "Capture and submit enrollment"}</button>
-                <button type="button" className="academic-button secondary" onClick={stopCamera} disabled={isBusy}>Stop camera</button>
-              </div>}
-              {stream && !cameraReady && <p className="academic-empty" role="status">Waiting for camera metadata and preview…</p>}
+              {!stream ? (
+                <button type="button" className="academic-button" onClick={() => void startCamera()} disabled={!consentAccepted || isBusy}>
+                  {cameraBusy ? "Opening camera…" : "Start camera and enroll automatically"}
+                </button>
+              ) : (
+                <div className="active-liveness-actions">
+                  {cameraReady && <span className="camera-live-indicator">Camera active · automatic capture enabled</span>}
+                  {autoCaptureCountdown !== null && <p className="academic-footnote" role="status">Preparing your enrollment frame in {autoCaptureCountdown}… Keep your face visible.</p>}
+                  {notice?.type === "error" && <button type="button" className="academic-button" onClick={() => { autoCaptureStartedRef.current = false; void startCamera(); }} disabled={isBusy}>Retry automatic capture</button>}
+                  <button type="button" className="academic-button secondary" onClick={stopCamera} disabled={isBusy}>Stop camera</button>
+                </div>
+              )}
+              {stream && !cameraReady && <p className="academic-empty" role="status">Waiting for the camera preview…</p>}
             </div>
           )}
 
