@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import test from "node:test";
+import { normalizeApiError } from "../src/api/errors.js";
 import { resolve } from "node:path";
 
 const read = (path) => readFileSync(resolve(process.cwd(), "..", path), "utf8");
@@ -41,4 +42,48 @@ test("lecturer API service paths stay aligned with their backend routers", () =>
   assert.ok(academicService.includes('api.post("/academic/sections"'));
   assert.ok(academicRouter.includes('"/courses"'));
   assert.ok(academicRouter.includes('"/sections"'));
+});
+
+
+test("429 errors honor Retry-After and provide calm recovery guidance", () => {
+  const result = normalizeApiError({
+    response: {
+      status: 429,
+      headers: { "Retry-After": "13" },
+      data: {
+        success: false,
+        error: { code: "RATE_LIMIT_EXCEEDED", message: "Too many requests. Please slow down." },
+      },
+    },
+  });
+
+  assert.equal(result.status, 429);
+  assert.match(result.message, /wait 13 seconds/i);
+  assert.match(result.message, /do not need to reload/i);
+});
+
+test("429 errors without a readable Retry-After still explain what to do", () => {
+  const result = normalizeApiError({
+    response: {
+      status: 429,
+      headers: {},
+      data: { error: { message: "Too many requests." } },
+    },
+  });
+
+  assert.match(result.message, /wait a moment/i);
+  assert.match(result.message, /do not need to reload/i);
+});
+
+test("student QR, enrollment and liveness pages share the 429-aware formatter", () => {
+  for (const path of [
+    "src/Pages/StudentAcademic.jsx",
+    "src/Pages/StudentFaceEnrollment.jsx",
+    "src/components/ActiveLivenessCapture.jsx",
+  ]) {
+    assert.ok(
+      frontend(path).includes("getApiErrorMessage(error"),
+      `${path} should use the shared API error formatter`,
+    );
+  }
 });

@@ -2,12 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import WorkspaceHeader from "../components/WorkspaceHeader";
 import { useAuth } from "../auth/useAuth";
+import { getApiErrorMessage } from "../api/errors";
 import { enrollBiometric, getMyBiometricEnrollment } from "../services/biometric.service";
 import "../Styles/Academic.css";
 
 function messageFor(error, fallback) {
-  return error?.response?.data?.error?.message ||
-    error?.response?.data?.message || error?.message || fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 function cameraErrorMessage(error) {

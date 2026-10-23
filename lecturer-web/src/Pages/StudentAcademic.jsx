@@ -6,6 +6,7 @@ import ActiveLivenessCapture from "../components/ActiveLivenessCapture";
 import { getAvailableAttendanceSessions, getMyAttendanceRecords, markAttendance, validateAttendanceQr } from "../services/attendance.service";
 import { getSections } from "../services/academic.service";
 import { useAuth } from "../auth/useAuth";
+import { getApiErrorMessage } from "../api/errors";
 import "../Styles/Academic.css";
 import WorkspaceHeader from "../components/WorkspaceHeader";
 
@@ -28,7 +29,7 @@ function cameraErrorMessage(error, fallback) {
   return detail || fallback;
 }
 function messageFor(error, fallback) {
-  return error?.response?.data?.error?.message || error?.response?.data?.message || error?.message || fallback;
+  return getApiErrorMessage(error, fallback);
 }
 
 export default function StudentAcademic() {

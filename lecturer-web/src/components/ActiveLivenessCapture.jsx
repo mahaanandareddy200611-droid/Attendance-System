@@ -3,6 +3,7 @@ import {
   createActiveBiometricChallenge,
   verifyActiveBiometricSequence,
 } from "../services/biometric.service";
+import { getApiErrorMessage } from "../api/errors";
 
 function stopStream(stream) {
   stream?.getTracks().forEach((track) => track.stop());
@@ -12,7 +13,7 @@ function explainCameraError(error) {
   if (error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError") return "Camera permission was denied. Allow camera access for this HTTPS site and retry.";
   if (error?.name === "NotFoundError" || error?.name === "DevicesNotFoundError") return "No front camera was found. Connect or enable a camera and retry.";
   if (error?.name === "NotReadableError" || error?.name === "TrackStartError") return "The camera is busy or unavailable. Close other camera apps/tabs and retry.";
-  return error?.response?.data?.error?.message || error?.message || "Could not start the camera-based liveness check.";
+  return getApiErrorMessage(error, "Could not start the camera-based liveness check.");
 }
 
 export default function ActiveLivenessCapture({
