@@ -43,6 +43,16 @@ exports.enroll =
     asyncHandler(
         async (req, res) => {
 
+            if (
+                req.body?.consent !== "true" ||
+                req.body?.consentVersion !== "face-attendance-v1"
+            ) {
+                throw new AppError(
+                    "Explicit face-enrollment consent is required before a biometric profile can be created",
+                    400
+                );
+            }
+
             if (!req.file) {
 
                 throw new AppError(
