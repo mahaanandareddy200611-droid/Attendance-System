@@ -54,14 +54,13 @@ exports.enroll =
 
             const enrollment =
                 await biometricService.enroll({
-                    userId:
-                        req.user.id,
-
-                    imageBuffer:
-                        req.file.buffer,
-
-                    mimeType:
-                        req.file.mimetype
+                    userId: req.user.id,
+                    imageBuffer: req.file.buffer,
+                    mimeType: req.file.mimetype,
+                    consentVersion: req.body?.consent === "true"
+                        ? String(req.body?.consentVersion || "")
+                        : null,
+                    consentedAt: req.body?.consent === "true" ? new Date() : null
                 });
 
 
