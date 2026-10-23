@@ -51,6 +51,13 @@ export function normalizeApiError(
       : "You’ve reached the short-term request limit. Wait a moment before trying again; you do not need to reload.";
   }
 
+  if (status === 429) {
+    const retryAfter = Number(error?.response?.headers?.["retry-after"]);
+    message = Number.isFinite(retryAfter) && retryAfter > 0
+      ? `You’ve reached the short-term request limit. Wait ${Math.ceil(retryAfter)} seconds before trying again; you do not need to reload.`
+      : "You’ve reached the short-term request limit. Wait a moment before trying again; you do not need to reload.";
+  }
+
   return {
     status,
     message,
