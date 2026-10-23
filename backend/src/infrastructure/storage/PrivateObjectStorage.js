@@ -174,7 +174,7 @@ async function requestSigned({ method, key, body, contentType, query = [], bucke
     Object.keys(headerValues)
       .sort()
       .map((name) => name + ":" + String(headerValues[name]).trim())
-      .join("");
+      .join("\n");
   const canonicalRequest = [
     method,
     url.pathname,
