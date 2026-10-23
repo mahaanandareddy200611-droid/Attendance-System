@@ -73,8 +73,14 @@ export async function apiRequest<T = any>(
       payload = { message: raw ? "Server returned an invalid response." : "Empty server response." };
     }
     if (!response.ok) {
+      const retryAfter = Number(response.headers.get("Retry-After"));
+      const message = response.status === 429
+        ? Number.isFinite(retryAfter) && retryAfter > 0
+          ? `Too many requests. Wait ${Math.ceil(retryAfter)} seconds before retrying; you do not need to reload.`
+          : "Too many requests. Wait a moment before retrying; do not keep submitting the same image."
+        : payload.error?.message || payload.message || `Request failed (${response.status})`;
       throw new ApiError(
-        payload.error?.message || payload.message || `Request failed (${response.status})`,
+        message,
         response.status,
         payload.error?.code,
         payload.requestId,

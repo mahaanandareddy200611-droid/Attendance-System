@@ -50,6 +50,20 @@ const BiometricEnrollmentSchema =
                 default: Date.now
             },
 
+            // The app stores only consent metadata and an opaque provider profile
+            // reference; raw capture images and face vectors stay with the provider.
+            consentVersion: {
+                type: String,
+                trim: true,
+                maxlength: 80,
+                default: null
+            },
+
+            consentedAt: {
+                type: Date,
+                default: null
+            },
+
             reviewDecision: {
                 type: String,
                 enum: ["PENDING", "APPROVED", "REJECTED", "WITHDRAWN"],

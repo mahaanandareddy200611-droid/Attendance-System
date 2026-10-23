@@ -164,7 +164,7 @@ ENROLL
 --------------------------------------------------
 */
 
-exports.enroll = async ({ userId, imageBuffer, mimeType }) => {
+exports.enroll = async ({ userId, imageBuffer, mimeType, consentVersion = null, consentedAt = null }) => {
     // One Redis reservation per student prevents duplicate provider enrollments
     // when multiple stateless API instances receive concurrent requests.
     const reservationKey = `biometric:enrollment-reservation:${String(userId)}`;
@@ -199,7 +199,9 @@ exports.enroll = async ({ userId, imageBuffer, mimeType }) => {
                 providerUserId: result.providerUserId,
                 modelVersion: process.env.BIOMETRIC_MODEL_VERSION || "insightface",
                 status: "PENDING_APPROVAL",
-                reviewDecision: "PENDING"
+                reviewDecision: "PENDING",
+                consentVersion: consentVersion || null,
+                consentedAt: consentVersion && consentedAt ? consentedAt : null
             });
         } catch (error) {
             // Avoid leaving a provider-side face profile orphaned if persistence

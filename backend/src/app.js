@@ -99,6 +99,9 @@ app.use(
     },
 
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    // The browser needs these response headers to show accurate 429 retry timing
+    // and provide request IDs when a staging API call fails.
+    exposedHeaders: ["Retry-After", "X-RateLimit-Limit", "X-RateLimit-Remaining", "X-Request-ID"],
   }),
 );
 
