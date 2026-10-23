@@ -275,55 +275,40 @@ export default function CheckInScreen() {
     );
   };
 
-  const captureLocation = async () => {
-    setBusy(true);
-    try {
-      const location = await captureLocationEvidence();
-      setLocationEvidence(location);
-      showNotice(
-        "Location captured with approximately " + Math.round(location.accuracyMeters) + " m accuracy. Complete liveness, then scan the QR immediately.",
-        "success",
-      );
-    } catch (error) {
-      setLocationEvidence(null);
-      showNotice(getMessage(error), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const startLiveness = async () => {
-    if (!token || !sessionId) {
-      showNotice("Select an active attendance session first.", "error");
+  const startLiveness = useCallback(async () => {
+    if (!token || !sessionId || !validationTicket) {
+      showNotice("Scan and validate the selected class QR before face/liveness verification.", "error");
       return;
     }
-    if (!deviceReady || biometricStatus !== "ACTIVE" || !locationEvidence) {
-      showNotice("Register this phone, enroll your face and capture location before starting liveness.", "error");
-      return;
-    }
-    if (!await ensureCameraPermission()) return;
     setBusy(true);
     try {
       const challenge = await issueActiveLivenessChallenge(token, sessionId);
+      setFrameUris([]);
       setActiveChallenge(challenge);
+      captureLock.current = false;
+      automaticLivenessCapture.current = false;
+      setLivenessCountdown(null);
+      setCameraReady(false);
+      setCameraMode("liveness");
+      showNotice("QR accepted by the server. Follow the visible instructions; live frames will be captured automatically.", "success");
+    } catch (error) {
+      setActiveChallenge(null);
       setFrameUris([]);
       setAssertionId("");
-      setPendingAttempt(null);
-      setCameraReady(false);
-      captureLock.current = false;
-      setCameraMode("liveness");
-      showNotice("Follow the server's randomized camera instructions. The challenge is short-lived.");
-    } catch (error) {
-      showNotice(getMessage(error), "error");
+      setValidationTicket(null);
+      autoStartedTicketId.current = "";
+      scannerLock.current = false;
+      setCameraMode("none");
+      showNotice(getMessage(error) + " Scan the lecturer's current QR again.", "error");
     } finally {
       setBusy(false);
     }
-  };
+  }, [token, sessionId, validationTicket, showNotice]);
 
-  const captureLivenessFrame = async () => {
+  const captureLivenessFrame = useCallback(async () => {
     if (captureLock.current || busy) return;
-    if (!cameraRef.current || !cameraReady || !activeChallenge || !token || !sessionId) {
-      showNotice("Wait for the camera preview to be ready.", "error");
+    if (!cameraRef.current || !cameraReady || !activeChallenge || !token || !sessionId || !validationTicket) {
+      showNotice("Wait for the visible camera preview and active QR ticket.", "error");
       return;
     }
 
@@ -337,12 +322,14 @@ export default function CheckInScreen() {
       setFrameUris(newUris);
 
       if (newUris.length < 3) {
-        showNotice("Captured frame " + newUris.length + " of 3. Next: " + activeChallenge.steps[newUris.length].instruction);
+        const nextInstruction = activeChallenge.steps[newUris.length]?.instruction || "Keep your face visible";
+        showNotice("Frame " + newUris.length + " of 3 received. Next prompt: " + nextInstruction + ". Capture continues automatically.", "info");
         return;
       }
 
       setCameraMode("none");
-      showNotice("Checking frame order, face identity and provider liveness…");
+      setCameraReady(false);
+      showNotice("Checking face identity and active liveness with the configured provider…", "info");
       const nextAssertion = await verifyActiveLiveness({
         token,
         sessionId,
@@ -350,92 +337,85 @@ export default function CheckInScreen() {
         challenge: activeChallenge.challenge,
         frames: newUris,
       });
-      // Remove the camera images from the local cache after the provider has
-      // finished verifying them. The server stores only the resulting assertion.
       await deleteTemporaryPhotos(newUris);
       setAssertionId(nextAssertion);
       setActiveChallenge(null);
       setFrameUris([]);
-      showNotice("Verification passed. The QR scanner is opening; scan the lecturer's current QR now.", "success");
-      scannerLock.current = false;
-      setCameraReady(false);
-      setCameraMode("scan");
+      showNotice("Face match and liveness passed. Attendance is being recorded automatically.", "success");
     } catch (error) {
-      await deleteTemporaryPhotos(newUris);
+      await deleteTemporaryPhotos([...newUris, ...frameUris]);
       setFrameUris([]);
       setActiveChallenge(null);
       setAssertionId("");
+      setCameraReady(false);
       setCameraMode("none");
-      showNotice(getMessage(error) + " Start a new liveness challenge before trying again.", "error");
+      setValidationTicket(null);
+      autoStartedTicketId.current = "";
+      scannerLock.current = false;
+      showNotice(getMessage(error) + " Scan a fresh QR and repeat the face check.", "error");
     } finally {
       captureLock.current = false;
       setBusy(false);
     }
-  };
+  }, [busy, cameraReady, activeChallenge, token, sessionId, validationTicket, frameUris, showNotice]);
 
-  const executeAttendanceAttempt = async (attempt: PendingAttempt) => {
-    if (!user || !token || !deviceId) return;
+  const executeAttendanceAttempt = useCallback(async (attempt: PendingAttempt) => {
+    if (!token) return;
     setBusy(true);
     try {
-      const response = await submitAttendance({
-        userId: user.id,
+      const response = await submitValidatedAttendance({
         token,
-        deviceId,
-        sessionId: attempt.sessionId,
-        qrToken: attempt.qrToken,
-        idempotencyKey: attempt.idempotencyKey,
+        validationId: attempt.validationId,
         biometricAssertionId: attempt.biometricAssertionId,
-        location: attempt.location,
+        idempotencyKey: attempt.idempotencyKey,
       });
       setPendingAttempt(null);
       setAssertionId("");
-      setLocationEvidence(null);
+      setValidationTicket(null);
       setFrameUris([]);
       setActiveChallenge(null);
       setCameraMode("none");
       scannerLock.current = false;
+      autoStartedTicketId.current = "";
       showNotice(response.message || "Attendance marked successfully.", "success");
       await reloadData();
     } catch (error) {
       const status = errorStatus(error);
       if (!status || status >= 500 || status === 429) {
         setPendingAttempt(attempt);
-        showNotice(
-          "The server did not confirm the result. Retry the exact same attempt to recover its idempotent result. " + getMessage(error),
-          "error",
-        );
+        showNotice("The server did not confirm the result. Retry the exact same attempt to recover its idempotent result. " + getMessage(error), "error");
       } else {
         setPendingAttempt(null);
         setAssertionId("");
+        setValidationTicket(null);
         setCameraMode("none");
-        showNotice(getMessage(error) + " Capture a new liveness assertion and scan a fresh QR.", "error");
+        scannerLock.current = false;
+        autoStartedTicketId.current = "";
+        showNotice(getMessage(error) + " The QR ticket may have expired. Scan the current QR and repeat face verification.", "error");
       }
     } finally {
       setBusy(false);
     }
-  };
+  }, [token, reloadData, showNotice]);
 
   const onQrScanned = async (value: string) => {
-    if (scannerLock.current || busy || !sessionId || !assertionId || !locationEvidence || !token) return;
+    if (scannerLock.current || busy || !sessionId || !token || biometricStatus !== "ACTIVE") return;
     scannerLock.current = true;
     try {
       const qrToken = extractQrToken(value);
-      const tokenSessionId = readTokenSessionId(qrToken);
-      if (tokenSessionId && tokenSessionId !== sessionId) {
-        throw new Error("This QR belongs to another session. Keep the selected session and scan its QR.");
+      const ticket = await validateAttendanceQr(token, qrToken);
+      if (ticket.sessionId !== sessionId) {
+        throw new Error("This QR belongs to another class session. Select the correct session and scan its QR.");
       }
-      const attempt: PendingAttempt = {
-        sessionId,
-        qrToken,
-        idempotencyKey: Crypto.randomUUID(),
-        biometricAssertionId: assertionId,
-        location: locationEvidence,
-      };
-      setPendingAttempt(attempt);
+      setValidationTicket(ticket);
+      setAssertionId("");
+      setActiveChallenge(null);
+      setFrameUris([]);
+      setPendingAttempt(null);
+      setCameraReady(false);
       setCameraMode("none");
-      // Submit immediately from the barcode callback. Do not wait for another
-      // button press after a 250 ms-class QR has been decoded.
-      await executeAttendanceAttempt(attempt);
+      autoStartedTicketId.current = "";
+      showNotice("Live QR validated by the server. Face matching and liveness will now start automatically.", "success");
     } catch (error) {
       scannerLock.current = false;
       setCameraMode("none");
@@ -443,31 +423,107 @@ export default function CheckInScreen() {
     }
   };
 
-  const openScanner = async () => {
-    if (!assertionId || !locationEvidence || !deviceReady) {
-      showNotice("Register the device, capture location and complete active liveness first.", "error");
+  const openScanner = useCallback(async () => {
+    if (!sessionId || !token) {
+      showNotice("Select an active class session first.", "error");
+      return;
+    }
+    if (biometricStatus !== "ACTIVE") {
+      showNotice("Complete face enrollment and wait for lecturer approval before check-in.", "error");
       return;
     }
     if (!await ensureCameraPermission()) return;
     scannerLock.current = false;
-    setCameraReady(false);
-    setCameraMode("scan");
-    showNotice("Point the back camera at the selected session's current QR. Attendance submits immediately after decode.");
-  };
-
-  const selectSession = (nextSessionId: string) => {
-    // A session switch abandons any partially captured liveness frames.
-    void deleteTemporaryPhotos(frameUris);
-    setSessionId(nextSessionId);
+    setValidationTicket(null);
     setAssertionId("");
     setActiveChallenge(null);
     setFrameUris([]);
-    setLocationEvidence(null);
+    setPendingAttempt(null);
+    autoStartedTicketId.current = "";
+    setCameraReady(false);
+    setCameraMode("scan");
+    showNotice("Scan the lecturer's current QR. After the server validates it, face matching and liveness run automatically.", "info");
+  }, [sessionId, token, biometricStatus, ensureCameraPermission, showNotice]);
+
+  const selectSession = (nextSessionId: string) => {
+    void deleteTemporaryPhotos(frameUris);
+    setSessionId(nextSessionId);
+    setValidationTicket(null);
+    setAssertionId("");
+    setActiveChallenge(null);
+    setFrameUris([]);
     setPendingAttempt(null);
     setCameraMode("none");
+    setCameraReady(false);
     scannerLock.current = false;
-    showNotice("Session selected. Capture location, finish liveness and then scan its fresh QR.");
+    captureLock.current = false;
+    automaticLivenessCapture.current = false;
+    autoStartedTicketId.current = "";
+    showNotice("Class selected. Scan its live QR first; the app then runs the visible face/liveness check.", "info");
   };
+
+  useEffect(() => {
+    if (
+      !validationTicket ||
+      !token ||
+      !sessionId ||
+      validationTicket.sessionId !== sessionId ||
+      cameraMode !== "none" ||
+      busy ||
+      activeChallenge ||
+      assertionId ||
+      pendingAttempt ||
+      autoStartedTicketId.current === validationTicket.validationId
+    ) return;
+    autoStartedTicketId.current = validationTicket.validationId;
+    void startLiveness();
+  }, [validationTicket, token, sessionId, cameraMode, busy, activeChallenge, assertionId, pendingAttempt, startLiveness]);
+
+  useEffect(() => {
+    const step = activeChallenge?.steps?.[frameUris.length];
+    if (
+      cameraMode !== "liveness" ||
+      !cameraReady ||
+      !activeChallenge ||
+      !step ||
+      busy ||
+      automaticLivenessCapture.current
+    ) return undefined;
+
+    automaticLivenessCapture.current = true;
+    setLivenessCountdown(2);
+    let fired = false;
+    const interval = setInterval(() => {
+      setLivenessCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+    }, 1000);
+    const timeout = setTimeout(() => {
+      fired = true;
+      automaticLivenessCapture.current = false;
+      setLivenessCountdown(null);
+      void captureLivenessFrame();
+    }, 2100);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (!fired) {
+        automaticLivenessCapture.current = false;
+        setLivenessCountdown(null);
+      }
+    };
+  }, [cameraMode, cameraReady, activeChallenge?.challengeId, frameUris.length, busy, captureLivenessFrame]);
+
+  useEffect(() => {
+    if (!validationTicket || !assertionId || busy || pendingAttempt) return;
+    const attempt: PendingAttempt = {
+      sessionId: validationTicket.sessionId,
+      validationId: validationTicket.validationId,
+      idempotencyKey: Crypto.randomUUID(),
+      biometricAssertionId: assertionId,
+    };
+    setPendingAttempt(attempt);
+    void executeAttendanceAttempt(attempt);
+  }, [validationTicket, assertionId, busy, pendingAttempt, executeAttendanceAttempt]);
 
   if (authLoading) {
     return <View style={styles.center}><ActivityIndicator size="large" color="#3157d5" /><Text style={styles.muted}>Restoring secure student session…</Text></View>;
