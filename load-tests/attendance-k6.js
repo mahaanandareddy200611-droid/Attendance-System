@@ -27,7 +27,8 @@ if (parsedBase.protocol !== "https:") {
 if (!parsedBase.hostname.toLowerCase().includes("staging")) {
   throw new Error("Refusing to load test a non-staging hostname.");
 }
-if (parsedBase.pathname.replace(/\\/+$/, "") !== "/api/v1" || parsedBase.search || parsedBase.hash) {
+const basePath = parsedBase.pathname.endsWith("/") ? parsedBase.pathname.slice(0, -1) : parsedBase.pathname;
+if (basePath !== "/api/v1" || parsedBase.search || parsedBase.hash) {
   throw new Error("BASE_URL must end in exactly /api/v1 and have no query or fragment.");
 }
 if (!ALLOWED_PATHS.has(TEST_PATH)) {
