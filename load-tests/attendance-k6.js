@@ -7,7 +7,7 @@ const TARGET_RPS = Number(__ENV.TARGET_RPS || 100);
 const TARGET_DURATION = String(__ENV.TARGET_DURATION || "30s");
 const DEFAULT_STAGING_HOSTS = ["attendance-backend-staging-n04q.onrender.com"];
 const CONFIGURED_STAGING_HOSTS = String(__ENV.ALLOWED_STAGING_HOSTS || "")
-  .split(/[\\r\\n,]+/)
+  .split(/[\r\n,]+/)
   .map((value) => value.trim().toLowerCase())
   .filter(Boolean);
 const ALLOWED_STAGING_HOSTS = CONFIGURED_STAGING_HOSTS.length ? CONFIGURED_STAGING_HOSTS : DEFAULT_STAGING_HOSTS;

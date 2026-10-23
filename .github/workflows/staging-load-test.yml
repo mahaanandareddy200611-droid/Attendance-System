@@ -73,7 +73,7 @@ jobs:
           if (!hostname.includes("staging")) fail("Refusing load test: hostname must explicitly contain 'staging'.");
           const defaultAllowedHosts = ["attendance-backend-staging-n04q.onrender.com"];
           const allowedHosts = String(process.env.ALLOWED_STAGING_HOSTS || "")
-            .split(/[\\r\\n,]+/)
+            .split(/[\r\n,]+/)
             .map((value) => value.trim().toLowerCase())
             .filter(Boolean);
           const effectiveAllowedHosts = allowedHosts.length ? allowedHosts : defaultAllowedHosts;
