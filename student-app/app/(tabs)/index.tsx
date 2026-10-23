@@ -447,6 +447,46 @@ export default function CheckInScreen() {
 
   useEffect(() => {
     if (
+      cameraMode !== "liveness" ||
+      !cameraReady ||
+      activeChallenge ||
+      busy ||
+      !validationTicket ||
+      !token ||
+      !sessionId ||
+      challengeRequestInFlight.current ||
+      challengeStartedForTicket.current === validationTicket.validationId
+    ) return;
+
+    challengeStartedForTicket.current = validationTicket.validationId;
+    challengeRequestInFlight.current = true;
+    setBusy(true);
+    void issueActiveLivenessChallenge(token, sessionId)
+      .then((challenge) => {
+        setFrameUris([]);
+        setActiveChallenge(challenge);
+        showNotice("Camera ready. Follow each visible instruction; three live frames will be captured automatically.", "info");
+      })
+      .catch((error) => {
+        setActiveChallenge(null);
+        setFrameUris([]);
+        setAssertionId("");
+        setValidationTicket(null);
+        autoStartedTicketId.current = "";
+        challengeStartedForTicket.current = "";
+        scannerLock.current = false;
+        setCameraMode("none");
+        setCameraReady(false);
+        showNotice(getMessage(error) + " Scan the lecturer's current QR again.", "error");
+      })
+      .finally(() => {
+        challengeRequestInFlight.current = false;
+        setBusy(false);
+      });
+  }, [cameraMode, cameraReady, activeChallenge, busy, validationTicket, token, sessionId, showNotice]);
+
+  useEffect(() => {
+    if (
       !validationTicket ||
       !token ||
       !sessionId ||
