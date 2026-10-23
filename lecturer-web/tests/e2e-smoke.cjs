@@ -636,7 +636,7 @@ test("student can submit face enrollment independently before an attendance QR e
   await page.getByRole("checkbox").check();
   await page.getByRole("button", { name: "Start camera and enroll automatically" }).click();
   await page.locator(".student-enrollment-camera video").waitFor({ state: "visible", timeout: 10000 });
-  await page.getByText(/Preparing your enrollment frame|Camera active/i).waitFor({ timeout: 10000 });
+  await page.locator(".student-enrollment-camera .camera-live-indicator").waitFor({ state: "visible", timeout: 10000 });
   await page.getByText(/submitted for lecturer approval/i).waitFor({ timeout: 15000 });
   assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
   assert.equal(calls.some((call) => call.path === "/attendance/validate-qr"), false, "enrollment must not require an attendance QR");
