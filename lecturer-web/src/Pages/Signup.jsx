@@ -1,4 +1,4 @@
-import { Signup as signupuser } from "../services/auth.service";
+import { Signup as signupuser, Login as loginuser } from "../services/auth.service";
 import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { getApiErrorMessage } from "../api/errors";
@@ -11,6 +11,7 @@ function Signup() {
   const [mobileNumber, setMobileNumber] = useState("");
   const [password, setPassword] = useState("");
   const [confirmPassword, setConfirmPassword] = useState("");
+  const [faceConsent, setFaceConsent] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
   const [submitting, setSubmitting] = useState(false);
 
@@ -19,6 +20,11 @@ function Signup() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setErrorMessage("");
+
+    if (!faceConsent) {
+      setErrorMessage("Please read and accept the face-enrollment notice to create a student attendance account.");
+      return;
+    }
 
     if (password !== confirmPassword) {
       setErrorMessage("Passwords do not match.");
@@ -37,12 +43,28 @@ function Signup() {
       };
 
       await signupuser(data);
-      navigate("/login", {
-        replace: true,
-        state: {
-          notice: "Your student account is ready. Sign in to continue.",
-        },
-      });
+
+      // Continue directly into the required enrollment step. A full-page
+      // navigation lets AuthProvider restore the freshly issued session token.
+      try {
+        const loginResponse = await loginuser({ email: data.email, password });
+        const token = loginResponse?.data?.token;
+        const signedInUser = loginResponse?.data?.data;
+        if (!token || signedInUser?.role !== "Student") {
+          throw new Error("The new student session could not be started.");
+        }
+        sessionStorage.setItem("token", token);
+        sessionStorage.setItem("user", JSON.stringify(signedInUser));
+        window.location.replace("/student/face-enrollment?required=1&consent=face-attendance-v1");
+        return;
+      } catch (loginError) {
+        navigate("/login", {
+          replace: true,
+          state: {
+            notice: "Your account was created. Sign in to finish the required face enrollment before attendance is enabled.",
+          },
+        });
+      }
     } catch (error) {
       setErrorMessage(
         getApiErrorMessage(
@@ -161,7 +183,19 @@ function Signup() {
             />
           </div>
 
-          <button type="submit" disabled={submitting}>
+          <label className="consent-check">
+            <input
+              type="checkbox"
+              checked={faceConsent}
+              onChange={(event) => setFaceConsent(event.target.checked)}
+              required
+            />
+            <span>
+              <strong>Required face-enrollment consent.</strong> After account creation, the app will open the front camera and automatically capture one enrollment image once the live preview is ready. The camera will be visibly active. The attendance database stores a provider profile reference and consent record, not the raw image or face vector; the configured biometric provider manages the face profile.
+            </span>
+          </label>
+
+          <button type="submit" disabled={submitting || !faceConsent}>
             {submitting ? "Creating account…" : "Sign Up"}
           </button>
         </form>
