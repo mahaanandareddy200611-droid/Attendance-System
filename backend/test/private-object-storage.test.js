@@ -218,3 +218,93 @@ test("storage errors do not expose provider response bodies", async (t) => {
     (error) => error.statusCode === 503 && !error.message.includes("sensitive-provider-detail"),
   );
 });
+
+
+function expectedSigV4Signature({ method, url, headers, secretAccessKey, region, query = "", payloadHash, amzDate = headers["x-amz-date"] }) {
+  const dateStamp = amzDate.slice(0, 8);
+  const signedHeaderNames = Object.keys(headers).sort();
+  const canonicalHeaders = signedHeaderNames
+    .map((name) => name + ":" + String(headers[name]).trim())
+    .join("\n");
+  const signedHeaders = signedHeaderNames.join(";");
+  const canonicalRequest = [
+    method,
+    url.pathname,
+    query,
+    canonicalHeaders,
+    signedHeaders,
+    payloadHash,
+  ].join("\n");
+  const hash = (value) => require("node:crypto").createHash("sha256").update(value).digest("hex");
+  const hmac = (key, value, encoding) => require("node:crypto").createHmac("sha256", key).update(value).digest(encoding);
+  const stringToSign = [
+    "AWS4-HMAC-SHA256",
+    amzDate,
+    dateStamp + "/" + region + "/s3/aws4_request",
+    hash(canonicalRequest),
+  ].join("\n");
+  const dateKey = hmac("AWS4" + secretAccessKey, dateStamp);
+  const regionKey = hmac(dateKey, region);
+  const serviceKey = hmac(regionKey, "s3");
+  const signingKey = hmac(serviceKey, "aws4_request");
+  return hmac(signingKey, stringToSign, "hex");
+}
+
+test("SigV4 authorization uses a canonical request without an extra blank line", async (t) => {
+  setStorageEnvironment(t);
+  const originalFetch = global.fetch;
+  let captured;
+  global.fetch = async (url, options) => {
+    captured = { url: new URL(String(url)), options };
+    return new Response(null, { status: 200 });
+  };
+  t.after(() => { global.fetch = originalFetch; });
+
+  const body = Buffer.from("canonical-signature-test");
+  await storage.putObject({ key: "evidence/test/photo.jpg", body, contentType: "image/jpeg" });
+
+  const expectedHeaders = {
+    host: captured.url.host,
+    "content-type": "image/jpeg",
+    "x-amz-content-sha256": storage._test.sha256(body),
+    "x-amz-date": captured.options.headers["x-amz-date"],
+  };
+  const expected = expectedSigV4Signature({
+    method: "PUT",
+    url: captured.url,
+    headers: expectedHeaders,
+    secretAccessKey: process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY,
+    region: process.env.OBJECT_STORAGE_REGION,
+    query: "",
+    payloadHash: storage._test.sha256(body),
+  });
+  assert.equal(captured.options.headers.Authorization.match(/Signature=([a-f0-9]{64})$/)?.[1], expected);
+});
+
+test("presigned download URLs use the same valid canonical-header boundary", async (t) => {
+  setStorageEnvironment(t);
+  const url = new URL(await storage.createDownloadUrl({ key: "evidence/test/photo.jpg", expiresInSeconds: 60 }));
+  const actualSignature = url.searchParams.get("X-Amz-Signature");
+  url.searchParams.delete("X-Amz-Signature");
+  const awsEncode = (value) => encodeURIComponent(String(value)).replace(/[!'()*]/g, (character) =>
+    "%" + character.charCodeAt(0).toString(16).toUpperCase()
+  );
+  const canonicalQuery = Array.from(url.searchParams.entries())
+    .map(([name, value]) => [awsEncode(name), awsEncode(value)])
+    .sort(([nameA, valueA], [nameB, valueB]) => nameA === nameB
+      ? (valueA === valueB ? 0 : valueA < valueB ? -1 : 1)
+      : nameA < nameB ? -1 : 1)
+    .map(([name, value]) => name + "=" + value)
+    .join("&");
+  const expected = expectedSigV4Signature({
+    method: "GET",
+    url,
+    headers: { host: url.host },
+    secretAccessKey: process.env.OBJECT_STORAGE_SECRET_ACCESS_KEY,
+    region: process.env.OBJECT_STORAGE_REGION,
+    query: canonicalQuery,
+    payloadHash: "UNSIGNED-PAYLOAD",
+    amzDate: url.searchParams.get("X-Amz-Date"),
+  });
+  assert.equal(actualSignature, expected);
+});

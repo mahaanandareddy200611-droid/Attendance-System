@@ -173,8 +173,8 @@ async function requestSigned({ method, key, body, contentType, query = [], bucke
   const canonicalHeaders =
     Object.keys(headerValues)
       .sort()
-      .map((name) => name + ":" + String(headerValues[name]).trim() + "\n")
-      .join("");
+      .map((name) => name + ":" + String(headerValues[name]).trim())
+      .join("\n");
   const canonicalRequest = [
     method,
     url.pathname,
@@ -326,7 +326,7 @@ exports.createDownloadUrl = async ({ key, expiresInSeconds }) => {
     "GET",
     url.pathname,
     canonicalQuery,
-    "host:" + url.host + "\n",
+    "host:" + url.host,
     "host",
     "UNSIGNED-PAYLOAD",
   ].join("\n");
