@@ -564,7 +564,7 @@ export default function CheckInScreen() {
           <View style={styles.brandMark}><Text style={styles.brandMarkText}>A</Text></View>
           <Text style={styles.eyebrow}>ATTENDANCE SYSTEM</Text>
           <Text style={styles.title}>Student check-in</Text>
-          <Text style={styles.subtitle}>Set up verification once, then scan your lecturer's live QR. Camera-based matching and liveness run automatically while the camera indicator stays visible.</Text>
+          <Text style={styles.subtitle}>Set up verification once, then scan your lecturer&apos;s live QR. Camera-based matching and liveness run automatically while the camera indicator stays visible.</Text>
           <View style={styles.card}>
             <Text style={styles.label}>College email</Text>
             <TextInput
