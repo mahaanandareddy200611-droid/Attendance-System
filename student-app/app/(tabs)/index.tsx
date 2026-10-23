@@ -276,29 +276,14 @@ export default function CheckInScreen() {
       showNotice("Scan and validate the selected class QR before face/liveness verification.", "error");
       return;
     }
-    setBusy(true);
-    try {
-      const challenge = await issueActiveLivenessChallenge(token, sessionId);
-      setFrameUris([]);
-      setActiveChallenge(challenge);
-      captureLock.current = false;
-      automaticLivenessCapture.current = false;
-      setLivenessCountdown(null);
-      setCameraReady(false);
-      setCameraMode("liveness");
-      showNotice("QR accepted by the server. Follow the visible instructions; live frames will be captured automatically.", "success");
-    } catch (error) {
-      setActiveChallenge(null);
-      setFrameUris([]);
-      setAssertionId("");
-      setValidationTicket(null);
-      autoStartedTicketId.current = "";
-      scannerLock.current = false;
-      setCameraMode("none");
-      showNotice(getMessage(error) + " Scan the lecturer's current QR again.", "error");
-    } finally {
-      setBusy(false);
-    }
+    setFrameUris([]);
+    setActiveChallenge(null);
+    captureLock.current = false;
+    automaticLivenessCapture.current = false;
+    setLivenessCountdown(null);
+    setCameraReady(false);
+    setCameraMode("liveness");
+    showNotice("QR accepted. Opening the front camera; the secure challenge starts after the live preview is ready.", "info");
   }, [token, sessionId, validationTicket, showNotice]);
 
   const captureLivenessFrame = useCallback(async () => {
