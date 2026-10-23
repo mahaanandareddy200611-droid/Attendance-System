@@ -120,6 +120,12 @@ export default function CheckInScreen() {
     setNoticeKind(kind);
   }, []);
 
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timeout = setTimeout(() => setNotice(""), 7000);
+    return () => clearTimeout(timeout);
+  }, [notice]);
+
   const reloadData = useCallback(async () => {
     if (!token || !user) return;
     setLoading(true);
@@ -607,9 +613,9 @@ export default function CheckInScreen() {
             </Pressable>
             <Text style={styles.footnote}>Use your existing college Student account. Admin and Lecturer accounts are rejected by this app.</Text>
           </View>
-          {notice ? <Notice message={notice} kind={noticeKind} /> : null}
           <Text style={styles.footer}>Your camera frames are sent for verification only. This screen does not upload them to retained-evidence storage.</Text>
         </ScrollView>
+        {notice ? <View style={styles.toastContainer} pointerEvents="box-none"><Notice message={notice} kind={noticeKind} /></View> : null}
       </KeyboardAvoidingView>
     );
   }
@@ -631,7 +637,6 @@ export default function CheckInScreen() {
           </Pressable>
         </View>
 
-        {notice ? <Notice message={notice} kind={noticeKind} /> : null}
 
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
@@ -822,13 +827,18 @@ export default function CheckInScreen() {
           </View>
         )}
       </ScrollView>
+      {notice ? <View style={styles.toastContainer} pointerEvents="box-none"><Notice message={notice} kind={noticeKind} /></View> : null}
     </View>
   );
 }
 
 function Notice({ message, kind }: { message: string; kind: "info" | "success" | "error" }) {
   return (
-    <View style={[styles.notice, kind === "success" ? styles.noticeSuccess : kind === "error" ? styles.noticeError : null]}>
+    <View
+      style={[styles.notice, kind === "success" ? styles.noticeSuccess : kind === "error" ? styles.noticeError : null]}
+      accessibilityRole={kind === "error" ? "alert" : "status"}
+      accessibilityLiveRegion={kind === "error" ? "assertive" : "polite"}
+    >
       <Text style={styles.noticeText}>{message}</Text>
     </View>
   );
@@ -848,6 +858,7 @@ function SetupRow({ title, detail, ready }: { title: string; detail: string; rea
 
 const styles = StyleSheet.create({
   screen: { flex: 1, backgroundColor: "#0b1220" },
+  toastContainer: { position: "absolute", top: Platform.OS === "ios" ? 58 : 26, left: 16, right: 16, zIndex: 1000, elevation: 10 },
   content: { padding: 18, paddingTop: 28, gap: 14, paddingBottom: 40 },
   loginContent: { flexGrow: 1, justifyContent: "center", padding: 22, gap: 14 },
   center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, backgroundColor: "#0b1220" },
