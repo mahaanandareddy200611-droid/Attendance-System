@@ -57,7 +57,7 @@ function Signup() {
         sessionStorage.setItem("user", JSON.stringify(signedInUser));
         window.location.replace("/student/face-enrollment?required=1&consent=face-attendance-v1");
         return;
-      } catch (loginError) {
+      } catch {
         navigate("/login", {
           replace: true,
           state: {
