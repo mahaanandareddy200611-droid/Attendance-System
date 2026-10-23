@@ -269,10 +269,18 @@ export default function ActiveLivenessCapture({
           <p className="academic-footnote">Three brief live frames are sent to the configured biometric provider for matching and active-liveness checks. The camera stops when the check finishes or you stop it.</p>
         </>
       )}
-      {message && <p className="academic-footnote" role="status">{message}</p>}
+      {message && (
+        <div
+          className={"academic-notice academic-toast " + (/denied|failed|error|expired|invalid|blocked|could not|retry|unavailable/i.test(message) ? "error" : /passed|success|verified/i.test(message) ? "success" : "info")}
+          role="status"
+          aria-live="polite"
+        >
+          {message}
+        </div>
+      )}
       {!cameraActive ? (
         <div className="active-liveness-actions">
-          <p className="academic-footnote" role="status">{busy ? "Starting the camera and preparing the secure check…" : message || "The check will start automatically after QR validation."}</p>
+          <p className="academic-footnote" role="status">{busy ? "Starting the camera and preparing the secure check…" : "The check will start automatically after QR validation."}</p>
           {!busy && <button type="button" className="academic-button" onClick={() => { autoStartedRef.current = false; void start(); }} disabled={disabled || !sessionId}>Retry face verification</button>}
         </div>
       ) : (
