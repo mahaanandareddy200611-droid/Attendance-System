@@ -219,7 +219,7 @@ export default function CheckInScreen() {
     setEnrollmentCountdown(2);
     let fired = false;
     const interval = setInterval(() => {
-      setEnrollmentCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+      setEnrollmentCountdown((remaining) => remaining !== null && Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
     }, 1000);
     const timeout = setTimeout(() => {
       fired = true;
@@ -522,7 +522,7 @@ export default function CheckInScreen() {
     setLivenessCountdown(2);
     let fired = false;
     const interval = setInterval(() => {
-      setLivenessCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+      setLivenessCountdown((remaining) => remaining !== null && Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
     }, 1000);
     const timeout = setTimeout(() => {
       fired = true;
@@ -539,7 +539,7 @@ export default function CheckInScreen() {
         setLivenessCountdown(null);
       }
     };
-  }, [cameraMode, cameraReady, activeChallenge?.challengeId, frameUris.length, busy, captureLivenessFrame]);
+  }, [cameraMode, cameraReady, activeChallenge, frameUris.length, busy, captureLivenessFrame]);
 
   useEffect(() => {
     if (!validationTicket || !assertionId || busy || pendingAttempt) return;
