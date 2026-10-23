@@ -11,6 +11,14 @@ export function normalizeApiError(
   const isNetworkError =
     !error?.response && Boolean(error?.request) && !isTimeout;
 
+  const responseHeaders = error?.response?.headers;
+  const requestId =
+    data?.requestId ??
+    responseHeaders?.get?.("x-request-id") ??
+    responseHeaders?.["x-request-id"] ??
+    responseHeaders?.["X-Request-ID"] ??
+    null;
+
   let message = fallback;
 
   if (isTimeout) {
@@ -44,6 +52,15 @@ export function normalizeApiError(
     message = error.message;
   }
 
+  if (
+    status >= 500 &&
+    /^(an )?(unexpected error occurred|internal server error|server error occurred)$/i.test(message.trim())
+  ) {
+    message = requestId
+      ? "The server could not complete this request. Please try again. Reference ID: " + requestId + "."
+      : "The server could not complete this request. Please try again.";
+  }
+
   if (status === 429) {
     const headers = error?.response?.headers;
     const retryAfterHeader = headers?.get?.("retry-after") ?? headers?.["retry-after"] ?? headers?.["Retry-After"];
@@ -58,8 +75,7 @@ export function normalizeApiError(
     message,
     code: data?.code ?? error?.code ?? null,
     details: data?.details ?? data?.errors ?? null,
-    requestId:
-      data?.requestId ?? error?.response?.headers?.["x-request-id"] ?? null,
+    requestId,
     isTimeout,
     isNetworkError,
   };

@@ -14,7 +14,10 @@ const request =
         const apiKey = process.env.BIOMETRIC_API_KEY;
         const timeoutMs = Number(process.env.BIOMETRIC_TIMEOUT_MS) || 5000;
         if (!baseUrl || !apiKey) {
-            throw new AppError("Biometric provider is not configured", 503);
+            const error = new AppError("Biometric provider is not configured", 503);
+            error.publicMessage = "Face verification is temporarily unavailable. Please try again later.";
+            error.providerCode = "BIOMETRIC_PROVIDER_NOT_CONFIGURED";
+            throw error;
         }
 
         const controller =
@@ -60,30 +63,28 @@ const request =
 
 
             if (!response.ok) {
+                const rawCode = data?.error?.code || data?.code || "BIOMETRIC_PROVIDER_ERROR";
+                const code = typeof rawCode === "string" && /^[A-Za-z0-9_.-]{1,80}$/.test(rawCode)
+                    ? rawCode
+                    : "BIOMETRIC_PROVIDER_ERROR";
+                const rawMessage = String(data?.error?.message || data?.message || "Biometric provider request failed");
 
-                const code =
-                    data?.error?.code ||
-                    data?.code ||
-                    "BIOMETRIC_PROVIDER_ERROR";
-
-                const message =
-                    data?.error?.message ||
-                    data?.message ||
-                    "Biometric provider request failed";
-
-
-                const error =
-                    new AppError(
-                        message,
-                        response.status
+                // Do not return upstream 5xx bodies verbatim. These often contain the
+                // provider's generic "unexpected error" and hide the actionable cause.
+                if (response.status >= 500) {
+                    const error = new AppError(
+                        "Biometric provider is temporarily unable to process this face image.",
+                        503
                     );
+                    error.publicMessage = "Face verification could not process the image because the biometric service is temporarily unavailable. Please retry shortly. If this continues, share the request reference with your administrator.";
+                    error.providerCode = code;
+                    error.providerResponse = data;
+                    throw error;
+                }
 
-                error.providerCode =
-                    code;
-
-                error.providerResponse =
-                    data;
-
+                const error = new AppError(rawMessage, response.status);
+                error.providerCode = code;
+                error.providerResponse = data;
                 throw error;
             }
 
@@ -91,20 +92,23 @@ const request =
             return data;
 
         } catch (error) {
+            if (error?.statusCode) throw error;
 
-            if (
-                error.name ===
-                "AbortError"
-            ) {
+            if (error?.name === "AbortError") {
+                const timeoutError = new AppError("Biometric provider timeout", 504);
+                timeoutError.publicMessage = "Face verification is taking too long because the biometric service did not respond. Please retry shortly.";
+                timeoutError.providerCode = "BIOMETRIC_PROVIDER_TIMEOUT";
+                throw timeoutError;
+            }
 
-                throw new AppError(
-                    "Biometric provider timeout",
-                    504
-                );
+            if (error instanceof TypeError) {
+                const networkError = new AppError("Biometric provider could not be reached", 503);
+                networkError.publicMessage = "Face verification could not reach the biometric service. Please retry shortly.";
+                networkError.providerCode = "BIOMETRIC_PROVIDER_UNREACHABLE";
+                throw networkError;
             }
 
             throw error;
-
         } finally {
 
             clearTimeout(timeout);

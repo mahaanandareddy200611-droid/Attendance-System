@@ -50,7 +50,7 @@ export default function ForgotPasswordPage() {
     }
     submit(
       event,
-      () => SetPassword({ email, password, resetToken }),
+      () => SetPassword({ email: email.trim().toLowerCase(), password, resetToken }),
       "Your password has been reset.",
       0,
     );
@@ -91,7 +91,7 @@ export default function ForgotPasswordPage() {
             onSubmit={(event) =>
               submit(
                 event,
-                () => ForgotPassword({ email }),
+                () => ForgotPassword({ email: email.trim().toLowerCase() }),
                 "If this email belongs to an account, a code has been sent.",
                 2,
               )
@@ -149,6 +149,19 @@ export default function ForgotPasswordPage() {
             </div>
             <button type="submit" disabled={busy || otp.length !== 6}>
               {busy ? "Checking…" : "Verify code"}
+            </button>
+            <button
+              type="button"
+              className="auth-secondary-action"
+              disabled={busy}
+              onClick={(event) => submit(
+                event,
+                () => ForgotPassword({ email: email.trim().toLowerCase() }),
+                "If this email belongs to an account, a new code has been requested. Check your inbox and spam folder.",
+                2,
+              )}
+            >
+              {busy ? "Working…" : "Resend code"}
             </button>
           </form>
         )}

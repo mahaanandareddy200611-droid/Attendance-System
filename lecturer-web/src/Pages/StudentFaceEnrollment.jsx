@@ -258,7 +258,7 @@ export default function StudentFaceEnrollment() {
     ) return undefined;
 
     autoCaptureStartedRef.current = true;
-    setAutoCaptureCountdown(2);
+    setAutoCaptureCountdown(4);
     const interval = window.setInterval(() => {
       setAutoCaptureCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
     }, 1000);
@@ -266,7 +266,7 @@ export default function StudentFaceEnrollment() {
       window.clearInterval(interval);
       setAutoCaptureCountdown(null);
       void submitEnrollment();
-    }, 2100);
+    }, 4100);
     return () => {
       window.clearInterval(interval);
       window.clearTimeout(timeout);
@@ -292,7 +292,7 @@ export default function StudentFaceEnrollment() {
           <span className="academic-role">{user?.name || "Student"}</span>
         </div>
 
-        {notice && <div className={"academic-notice academic-toast " + notice.type} role={notice.type === "error" ? "alert" : "status"} aria-live={notice.type === "error" ? "assertive" : "polite"}>{notice.text}</div>}
+        {notice && !stream && <div className={"academic-notice academic-toast " + notice.type} role={notice.type === "error" ? "alert" : "status"} aria-live={notice.type === "error" ? "assertive" : "polite"}>{notice.text}</div>}
 
         <section className="academic-card">
           <div className="academic-card-title">
@@ -344,8 +344,6 @@ export default function StudentFaceEnrollment() {
                 </label>
               )}
 
-              {stream && <video ref={videoRef} className="active-liveness-video" autoPlay playsInline muted aria-label="Live front-camera preview for face enrollment" />}
-
               {!stream ? (
                 <button type="button" className="academic-button" onClick={() => void startCamera()} disabled={!consentAccepted || isBusy}>
                   {cameraBusy ? "Opening camera…" : "Start camera and enroll automatically"}
@@ -359,7 +357,7 @@ export default function StudentFaceEnrollment() {
                 </div>
               )}
 
-              {stream && !cameraReady && <p className="academic-empty" role="status">Waiting for the camera preview…</p>}
+              {stream && !cameraReady && <p className="academic-empty" role="status">Waiting for the camera preview… The camera window will appear as soon as permission is granted.</p>}
               {requiredEnrollment && <p className="academic-footnote">Enrollment is required to check in. If your request needs approval, you can return to this page to see its status.</p>}
             </div>
           )}
@@ -367,6 +365,88 @@ export default function StudentFaceEnrollment() {
           <div className="active-liveness-actions"><Link className="academic-button secondary" to="/student/dashboard">Go to attendance</Link></div>
         </section>
       </section>
+
+      {stream && (
+        <div className="camera-modal-backdrop">
+          <section
+            className="camera-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="camera-modal-title"
+            aria-describedby="camera-modal-description"
+          >
+            <div className="camera-modal-header">
+              <span className="camera-modal-eyebrow">LIVE CAMERA · FACE ENROLLMENT</span>
+              <h2 id="camera-modal-title">Position your face in the camera</h2>
+              <p id="camera-modal-description">
+                Look straight at the front camera. Keep your whole face inside the frame, use steady lighting, and make sure nobody else is visible.
+                The camera stays visibly active and will capture automatically after the countdown.
+              </p>
+            </div>
+
+            <div className="camera-modal-preview">
+              <video
+                ref={videoRef}
+                className="camera-modal-video active-liveness-video"
+                autoPlay
+                playsInline
+                muted
+                aria-label="Live front-camera preview for face enrollment"
+              />
+              {!cameraReady && (
+                <div className="camera-preview-overlay" role="status">
+                  <span className="camera-preview-spinner" />
+                  Connecting to your camera…
+                </div>
+              )}
+            </div>
+
+            <div className="camera-modal-status">
+              {cameraReady
+                ? <span className="camera-live-indicator">Camera active · preview visible</span>
+                : <span className="camera-modal-pending">Waiting for camera preview…</span>}
+              {autoCaptureCountdown !== null && !submitBusy && (
+                <p className="camera-modal-countdown" role="status">
+                  Capturing automatically in {autoCaptureCountdown} second{autoCaptureCountdown === 1 ? "" : "s"}.
+                  Keep looking at the camera.
+                </p>
+              )}
+              {submitBusy && (
+                <p className="camera-modal-countdown" role="status">
+                  Sending the captured face securely for enrollment…
+                </p>
+              )}
+              {notice && (
+                <p className={"camera-modal-message " + notice.type} role={notice.type === "error" ? "alert" : "status"}>
+                  {notice.text}
+                </p>
+              )}
+            </div>
+
+            <div className="camera-modal-actions">
+              {notice?.type === "error" && (
+                <button
+                  type="button"
+                  className="academic-button"
+                  onClick={() => {
+                    autoCaptureStartedRef.current = true;
+                    void submitEnrollment();
+                  }}
+                  disabled={isBusy || !cameraReady}
+                >
+                  Retry with a fresh capture
+                </button>
+              )}
+              <button type="button" className="academic-button secondary" onClick={stopCamera} disabled={isBusy}>
+                {submitBusy ? "Please wait…" : "Close camera"}
+              </button>
+            </div>
+            <p className="camera-modal-privacy">
+              Privacy: this is a visible live preview, not a background recording. The enrollment image is sent to the configured biometric provider for matching.
+            </p>
+          </section>
+        </div>
+      )}
     </main>
   );
 }

@@ -210,3 +210,204 @@ body .academic-consent {
 body .academic-consent input { margin-top: 3px; accent-color: #63d7bf; }
 body .academic-consent strong { color: #edf3fb; }
 @media (max-width: 640px) { body .academic-toast { top: 76px; right: 12px; width: calc(100vw - 24px); } }
+
+
+/* Accessible dark-theme statuses: prevent old light-theme cards from breaking workspace contrast. */
+body .academic-page .academic-notice.info {
+  border-color: rgba(111, 149, 232, 0.30);
+  background: rgba(58, 85, 151, 0.19);
+  color: #d9e5ff;
+}
+body .academic-page .academic-notice.success {
+  border-color: rgba(99, 215, 191, 0.28);
+  background: rgba(20, 83, 65, 0.24);
+  color: #c9f8e9;
+}
+body .academic-page .academic-notice.error {
+  border-color: rgba(248, 113, 113, 0.30);
+  background: rgba(127, 29, 29, 0.24);
+  color: #fecaca;
+}
+body .academic-page .academic-notice strong { display: block; margin-bottom: 5px; color: inherit; }
+body .academic-page .academic-notice span { display: block; color: inherit; line-height: 1.6; }
+body .academic-page .enrollment-approval-item,
+body .academic-page .student-setup-item {
+  border-color: rgba(154, 173, 198, 0.18);
+  background: rgba(10, 20, 33, 0.56);
+}
+body .academic-page .enrollment-approval-details strong,
+body .academic-page .student-setup-copy { color: #e0e9f5; }
+body .academic-page .enrollment-approval-details p,
+body .academic-page .enrollment-approval-details span,
+body .academic-page .student-setup-copy span { color: #a8b7ca; }
+body .academic-page .academic-table-wrap { border-color: rgba(154, 173, 198, 0.19); }
+body .academic-page .academic-table th {
+  color: #c4d0e0;
+  background: #101b2a;
+  border-bottom: 1px solid rgba(154, 173, 198, 0.14);
+}
+body .academic-page .academic-table td {
+  color: #d0daea;
+  background: #141f2e;
+  border-bottom-color: rgba(154, 173, 198, 0.13);
+}
+body .academic-page .academic-table tbody tr:hover td { background: #19283a; }
+body .academic-page .academic-empty,
+body .academic-page .academic-empty-state p { color: #a8b7ca; }
+body .academic-page .academic-empty-icon { background: rgba(99, 215, 191, 0.11); color: #87e9d7; }
+body .academic-page .academic-welcome {
+  border-color: rgba(154, 173, 198, 0.18);
+  background: #141f2e;
+  box-shadow: 0 24px 70px rgba(0, 0, 0, 0.25);
+}
+body .academic-page .academic-welcome h1 { color: #edf3fb; }
+body .academic-page .academic-welcome > p:not(.academic-eyebrow) { color: #a8b7ca; }
+body .academic-page .report-toolbar { border-color: rgba(154, 173, 198, 0.18); background: #111d2c; }
+body .academic-page .report-pagination { border-top-color: rgba(154, 173, 198, 0.16); }
+body .academic-card-title { flex-wrap: wrap; }
+body .academic-card-title > div { min-width: 0; flex: 1 1 220px; }
+.auth-card form > .auth-secondary-action {
+  margin-top: 10px;
+  border: 1px solid rgba(154, 173, 198, 0.22);
+  background: transparent;
+  color: #cbd6e5;
+  box-shadow: none;
+}
+.auth-card form > .auth-secondary-action:hover:not(:disabled) {
+  background: rgba(99, 215, 191, 0.08);
+  color: #87e9d7;
+  box-shadow: none;
+}
+
+/* Face enrollment camera popup: clear instructions before the automatic capture. */
+.camera-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1500;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  padding: 24px;
+  background: rgba(2, 7, 15, 0.82);
+  backdrop-filter: blur(12px);
+}
+.camera-modal {
+  width: min(590px, 100%);
+  max-height: min(92dvh, 920px);
+  overflow-y: auto;
+  padding: clamp(18px, 3vw, 26px);
+  border: 1px solid rgba(99, 215, 191, 0.25);
+  border-radius: 22px;
+  background: #121e2d;
+  color: #e8eef7;
+  box-shadow: 0 32px 100px rgba(0, 0, 0, 0.56);
+}
+.camera-modal-header { margin-bottom: 15px; }
+.camera-modal-eyebrow {
+  display: block;
+  margin-bottom: 8px;
+  color: #79e3cf;
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0.15em;
+}
+.camera-modal-header h2 {
+  margin: 0 0 8px;
+  color: #f1f6fc;
+  font-size: clamp(21px, 4vw, 27px);
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+.camera-modal-header p,
+.camera-modal-privacy {
+  margin: 0;
+  color: #aab9cc;
+  font-size: 12px;
+  line-height: 1.65;
+}
+.camera-modal-preview {
+  position: relative;
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+  border: 1px solid rgba(99, 215, 191, 0.24);
+  border-radius: 16px;
+  background: #050b13;
+}
+.camera-modal-video.active-liveness-video {
+  width: 100%;
+  min-height: 220px;
+  max-height: 44dvh;
+  aspect-ratio: 4 / 3;
+  border: 0;
+  border-radius: 0;
+  object-fit: cover;
+  transform: scaleX(-1);
+}
+.camera-preview-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 18px;
+  color: #dce7f4;
+  background: rgba(5, 11, 19, 0.76);
+  font-size: 13px;
+}
+.camera-preview-spinner {
+  width: 19px;
+  height: 19px;
+  border: 2px solid rgba(99, 215, 191, 0.25);
+  border-top-color: #63d7bf;
+  border-radius: 50%;
+  animation: camera-preview-spin 700ms linear infinite;
+}
+@keyframes camera-preview-spin { to { transform: rotate(360deg); } }
+.camera-modal-status { min-height: 54px; margin-top: 13px; }
+.camera-modal-status .camera-live-indicator { margin: 0 0 8px; }
+.camera-modal-pending { color: #aab9cc; font-size: 12px; }
+.camera-modal-countdown {
+  margin: 6px 0 0;
+  color: #8ce8d7;
+  font-size: 13px;
+  line-height: 1.55;
+  font-weight: 750;
+}
+.camera-modal-message {
+  margin: 8px 0 0;
+  padding: 10px 12px;
+  border: 1px solid rgba(154, 173, 198, 0.2);
+  border-radius: 10px;
+  background: #17263a;
+  color: #d6e2f1;
+  font-size: 12px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.camera-modal-message.error {
+  border-color: rgba(248, 113, 113, 0.34);
+  background: rgba(127, 29, 29, 0.26);
+  color: #fecaca;
+}
+.camera-modal-message.success {
+  border-color: rgba(99, 215, 191, 0.30);
+  background: rgba(20, 83, 65, 0.25);
+  color: #c9f8e9;
+}
+.camera-modal-actions { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 13px; }
+.camera-modal-actions .academic-button { min-width: 130px; }
+.camera-modal-privacy {
+  margin-top: 14px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(154, 173, 198, 0.14);
+  font-size: 11px;
+}
+@media (max-width: 540px) {
+  .camera-modal-backdrop { padding: 10px; align-items: center; }
+  .camera-modal { padding: 16px; border-radius: 17px; max-height: 96dvh; }
+  .camera-modal-video.active-liveness-video { min-height: 180px; max-height: 35dvh; }
+  .camera-modal-actions { flex-direction: column-reverse; }
+  .camera-modal-actions .academic-button { width: 100%; }
+}

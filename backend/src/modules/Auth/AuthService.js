@@ -83,57 +83,88 @@ exports.Login = async (email, password) => {
 };
 
 exports.forgotPassword = async (email) => {
-  const user = await User.findOne({ email });
+  const normalizedEmail = String(email || "").trim().toLowerCase();
+  const user = await User.findOne({ email: normalizedEmail });
 
   if (!user) {
-    // The controller returns the same public response whether
-    // or not this email belongs to an account.
+    // The controller deliberately keeps unknown-account responses generic.
     return { sent: true };
-}
+  }
 
   const otp = crypto.randomInt(100000, 1000000).toString();
-
   const otpHash = crypto.createHash("sha256").update(otp).digest("hex");
 
   user.passwordResetOtpHash = otpHash;
-
   user.passwordResetOtpExpires = new Date(Date.now() + 5 * 60 * 1000);
-
   user.passwordResetOtpAttempts = 0;
-
   user.passwordResetVerifiedUntil = null;
   user.passwordResetTokenHash = null;
   user.passwordResetTokenExpires = null;
 
   await user.save();
 
-  await sendMail({
-    to: email,
-    subject: "Attendence System Password Reset OTP",
+  try {
+    await sendMail({
+      to: normalizedEmail,
+      subject: "Attendance System password reset code",
+      text: `Your Attendance System password reset code is ${otp}. It is valid for 5 minutes.`,
+      html: `
+        <h2>Attendance System password reset</h2>
+        <p>Your one-time reset code is:</p>
+        <h1 style="letter-spacing: 0.18em">${otp}</h1>
+        <p>This code expires in <strong>5 minutes</strong>.</p>
+        <p>If you did not request this reset, ignore this email.</p>
+      `,
+    });
+  } catch (mailError) {
+    // Do not leave an active OTP hash behind when no email was accepted.
+    let otpCleared = false;
+    try {
+      const cleanup = await User.updateOne(
+        { _id: user._id, passwordResetOtpHash: otpHash },
+        {
+          $set: {
+            passwordResetOtpHash: null,
+            passwordResetOtpExpires: null,
+            passwordResetOtpAttempts: 0,
+            passwordResetVerifiedUntil: null,
+            passwordResetTokenHash: null,
+            passwordResetTokenExpires: null,
+          },
+        },
+      );
+      otpCleared = Number(cleanup?.modifiedCount) === 1;
+    } catch {
+      // Keep the response safe while recording that cleanup itself did not complete.
+    }
 
-    text: `Your Attendence System reset OTP is ${otp}. It is valid for 5 minutes.`,
+    const rawCode = String(mailError?.code || "");
+    const rawCommand = String(mailError?.command || "");
+    const responseCode = Number(mailError?.responseCode);
+    const failureKind = /not configured|MAIL_PORT/i.test(String(mailError?.message || ""))
+      ? "MAIL_CONFIGURATION"
+      : rawCode === "EAUTH"
+        ? "MAIL_AUTHENTICATION"
+        : /ETIMEDOUT|ECONNECTION|ESOCKET|ECONNREFUSED|ENOTFOUND/.test(rawCode)
+          ? "MAIL_CONNECTION"
+          : "MAIL_DELIVERY";
+    console.error("Password reset email delivery failed", {
+      failureKind,
+      ...( /^[A-Za-z0-9_.-]{1,50}$/.test(rawCode) ? { mailCode: rawCode } : {}),
+      ...(Number.isInteger(responseCode) && responseCode >= 100 && responseCode <= 599 ? { responseCode } : {}),
+      ...( /^[A-Z]{1,24}$/.test(rawCommand) ? { command: rawCommand } : {}),
+      otpCleared,
+    });
 
-    html: `
-            <h2>Attendence System Password Reset</h2>
+    const failure = new AppError(
+      "Email delivery is temporarily unavailable. The reset code was not sent; please try again later.",
+      503,
+    );
+    failure.publicMessage = failure.message;
+    throw failure;
+  }
 
-            <p>Your password reset OTP is:</p>
-
-            <h1>${otp}</h1>
-
-            <p>
-                This OTP is valid for <strong>5 minutes</strong>.
-            </p>
-
-            <p>
-                If you did not request this password reset,
-                please ignore this email.
-            </p>
-        `,
-  });
-
-  return {
-    sent: true,
-  };
+  return { sent: true };
 };
 
 exports.verifyResetOTP = async (otp, email) => {
