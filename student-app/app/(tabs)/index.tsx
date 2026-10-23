@@ -16,9 +16,9 @@ import {
 
 import { useStudentAuth } from "../../src/auth/AuthProvider";
 import {
-  captureLocationEvidence,
   getAvailableSessions,
-  submitAttendance,
+  validateAttendanceQr,
+  submitValidatedAttendance,
 } from "../../src/lib/attendance";
 import {
   deleteFaceEnrollment,
@@ -27,13 +27,6 @@ import {
   issueActiveLivenessChallenge,
   verifyActiveLiveness,
 } from "../../src/lib/biometric";
-import { apiRequest } from "../../src/lib/api";
-import {
-  getOrRegisterNativeDevice,
-  getStoredNativeDeviceId,
-  hasNativeDeviceKey,
-  removeNativeDeviceKey,
-} from "../../src/lib/device";
 import { deleteTemporaryPhotos } from "../../src/lib/photos";
 
 type Session = {
@@ -46,18 +39,18 @@ type Session = {
 };
 
 type CameraMode = "none" | "enroll" | "liveness" | "scan";
-type LocationEvidence = {
-  latitude: number;
-  longitude: number;
-  accuracyMeters: number;
-  capturedAt: string;
+type ValidationTicket = {
+  validationId: string;
+  sessionId: string;
+  courseCode?: string;
+  section?: string;
+  expiresInMs?: number;
 };
 type PendingAttempt = {
   sessionId: string;
-  qrToken: string;
+  validationId: string;
   idempotencyKey: string;
   biometricAssertionId: string;
-  location: LocationEvidence;
 };
 
 function getMessage(error: unknown) {
@@ -86,16 +79,6 @@ function extractQrToken(value: string) {
   return trimmed;
 }
 
-function readTokenSessionId(token: string): string | null {
-  try {
-    const firstPart = token.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
-    const bytes = Uint8Array.from(atob(firstPart), (character) => character.charCodeAt(0));
-    const payload = JSON.parse(new TextDecoder().decode(bytes));
-    return typeof payload.sid === "string" ? payload.sid : null;
-  } catch {
-    return null;
-  }
-}
 
 export default function CheckInScreen() {
   const { user, token, loading: authLoading, login, logout } = useStudentAuth();
@@ -103,6 +86,9 @@ export default function CheckInScreen() {
   const cameraRef = useRef<CameraView>(null);
   const scannerLock = useRef(false);
   const captureLock = useRef(false);
+  const automaticEnrollmentCapture = useRef(false);
+  const automaticLivenessCapture = useRef(false);
+  const autoStartedTicketId = useRef("");
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -122,7 +108,10 @@ export default function CheckInScreen() {
   const [deviceBusy, setDeviceBusy] = useState(false);
   const [biometricStatus, setBiometricStatus] = useState("MISSING");
   const [biometricBusy, setBiometricBusy] = useState(false);
-  const [locationEvidence, setLocationEvidence] = useState<LocationEvidence | null>(null);
+  const [faceConsentAccepted, setFaceConsentAccepted] = useState(false);
+  const [enrollmentCountdown, setEnrollmentCountdown] = useState<number | null>(null);
+  const [livenessCountdown, setLivenessCountdown] = useState<number | null>(null);
+  const [validationTicket, setValidationTicket] = useState<ValidationTicket | null>(null);
   const [activeChallenge, setActiveChallenge] = useState<Awaited<ReturnType<typeof issueActiveLivenessChallenge>> | null>(null);
   const [frameUris, setFrameUris] = useState<string[]>([]);
   const [assertionId, setAssertionId] = useState("");
@@ -143,39 +132,8 @@ export default function CheckInScreen() {
       ]);
       if (sessionResult.status === "fulfilled") setSessions(sessionResult.value as Session[]);
       else showNotice(getMessage(sessionResult.reason), "error");
-
-      if (biometricResult.status === "fulfilled") {
-        setBiometricStatus(biometricResult.value?.status || "MISSING");
-      } else {
-        showNotice(getMessage(biometricResult.reason), "error");
-      }
-
-      const localKeyExists = await hasNativeDeviceKey(user.id);
-      const localId = await getStoredNativeDeviceId(user.id);
-      try {
-        const remote = await apiRequest<any>("/devices/me", { token });
-        const credential = remote.data;
-        if (
-          localKeyExists &&
-          localId &&
-          credential?.status === "ACTIVE" &&
-          credential?.deviceId === localId
-        ) {
-          setDeviceId(localId);
-          setDeviceReady(true);
-          setDeviceConflict("");
-        } else if (credential?.status === "ACTIVE") {
-          setDeviceId("");
-          setDeviceReady(false);
-          setDeviceConflict(String(credential.deviceId || "another registered device"));
-        } else {
-          setDeviceId("");
-          setDeviceReady(false);
-          setDeviceConflict("");
-        }
-      } catch (error) {
-        showNotice("Could not check device registration: " + getMessage(error), "error");
-      }
+      if (biometricResult.status === "fulfilled") setBiometricStatus(biometricResult.value?.status || "MISSING");
+      else showNotice(getMessage(biometricResult.reason), "error");
     } finally {
       setLoading(false);
     }
@@ -186,55 +144,41 @@ export default function CheckInScreen() {
     else {
       setSessions([]);
       setSessionId("");
-      setDeviceReady(false);
-      setDeviceId("");
       setBiometricStatus("MISSING");
+      setFaceConsentAccepted(false);
+      setValidationTicket(null);
+      setActiveChallenge(null);
+      setFrameUris([]);
+      setAssertionId("");
+      setPendingAttempt(null);
     }
   }, [token, user, reloadData]);
 
-  const ensureCameraPermission = async () => {
+  const ensureCameraPermission = useCallback(async () => {
     if (cameraPermission?.granted) return true;
     const next = await requestCameraPermission();
     if (!next.granted) {
-      showNotice("Camera permission is required for enrollment, liveness and QR scanning.", "error");
+      showNotice("Camera permission is required for consented face enrollment, liveness and QR scanning.", "error");
       return false;
     }
     return true;
-  };
+  }, [cameraPermission?.granted, requestCameraPermission, showNotice]);
 
-  const registerDevice = async (replaceExisting: boolean) => {
-    if (!user || !token) return;
-    setDeviceBusy(true);
-    try {
-      if (deviceConflict) {
-        if (!replaceExisting) {
-          showNotice("Another device is active. Confirm replacement only if you want this phone to become your registered device.", "error");
-          return;
-        }
-        await apiRequest("/devices/me", { method: "DELETE", token });
-        await removeNativeDeviceKey(user.id);
-      }
-      const nextId = await getOrRegisterNativeDevice(user.id, token);
-      setDeviceId(nextId);
-      setDeviceReady(true);
-      setDeviceConflict("");
-      showNotice("This phone is registered. Its signing seed stays in the phone's secure storage.", "success");
-    } catch (error) {
-      showNotice(getMessage(error), "error");
-    } finally {
-      setDeviceBusy(false);
+  const openEnrollmentCamera = useCallback(async () => {
+    if (!faceConsentAccepted) {
+      showNotice("Read and accept the face-enrollment notice before enabling the camera.", "error");
+      return;
     }
-  };
-
-  const openEnrollmentCamera = async () => {
     if (!await ensureCameraPermission()) return;
+    automaticEnrollmentCapture.current = false;
     setCameraReady(false);
     setCameraMode("enroll");
-  };
+    showNotice("Face enrollment has started. Keep your face visible; the camera captures automatically after a short on-screen countdown.");
+  }, [faceConsentAccepted, ensureCameraPermission, showNotice]);
 
-  const captureEnrollment = async () => {
-    if (!cameraRef.current || !cameraReady || busy) {
-      showNotice("Wait for the camera preview to be ready.", "error");
+  const captureEnrollment = useCallback(async () => {
+    if (!cameraRef.current || !cameraReady || busy || !faceConsentAccepted || !token) {
+      showNotice("Wait for the live camera preview and consent before capture.", "error");
       return;
     }
     setBusy(true);
@@ -245,10 +189,15 @@ export default function CheckInScreen() {
       imageUri = photo.uri;
       setCameraMode("none");
       setBiometricBusy(true);
-      await enrollFace(token!, imageUri);
-      setBiometricStatus("ACTIVE");
+      const response = await enrollFace(token, imageUri, faceConsentAccepted);
+      const status = response.data?.status || "PENDING_APPROVAL";
+      setBiometricStatus(status);
       setAssertionId("");
-      showNotice("Face enrollment completed by the biometric provider.", "success");
+      if (status === "ACTIVE") {
+        showNotice("Face enrollment is active. A live QR and face/liveness check are still required for every attendance check-in.", "success");
+      } else {
+        showNotice("Face enrollment submitted for lecturer approval. Attendance stays disabled until approval; do not submit another image while this request is pending.", "info");
+      }
     } catch (error) {
       showNotice(getMessage(error), "error");
     } finally {
@@ -256,7 +205,40 @@ export default function CheckInScreen() {
       setBiometricBusy(false);
       setBusy(false);
     }
-  };
+  }, [cameraReady, busy, faceConsentAccepted, token, showNotice]);
+
+  useEffect(() => {
+    if (
+      cameraMode !== "enroll" ||
+      !cameraReady ||
+      !faceConsentAccepted ||
+      busy ||
+      biometricBusy ||
+      automaticEnrollmentCapture.current
+    ) return undefined;
+
+    automaticEnrollmentCapture.current = true;
+    setEnrollmentCountdown(2);
+    let fired = false;
+    const interval = setInterval(() => {
+      setEnrollmentCountdown((remaining) => Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+    }, 1000);
+    const timeout = setTimeout(() => {
+      fired = true;
+      automaticEnrollmentCapture.current = false;
+      setEnrollmentCountdown(null);
+      void captureEnrollment();
+    }, 2100);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (!fired) {
+        automaticEnrollmentCapture.current = false;
+        setEnrollmentCountdown(null);
+      }
+    };
+  }, [cameraMode, cameraReady, faceConsentAccepted, busy, biometricBusy, captureEnrollment]);
 
   const removeFace = () => {
     Alert.alert(
