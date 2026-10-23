@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
+import { Link, useNavigate } from "react-router-dom";
 import { Html5Qrcode } from "html5-qrcode";
-import { enrollBiometric, getMyBiometricEnrollment } from "../services/biometric.service";
+import { getMyBiometricEnrollment } from "../services/biometric.service";
 import ActiveLivenessCapture from "../components/ActiveLivenessCapture";
 import { getAvailableAttendanceSessions, getMyAttendanceRecords, markAttendance, validateAttendanceQr } from "../services/attendance.service";
 import { getSections } from "../services/academic.service";
@@ -16,7 +17,6 @@ function getQrToken(value) {
     return String(value || "").trim();
   }
 }
-function stopStream(stream) { stream?.getTracks().forEach((track) => track.stop()); }
 function cameraErrorMessage(error, fallback) {
   const name = error?.name || "";
   if (name === "NotAllowedError" || name === "PermissionDeniedError") return "Camera permission was denied. Allow camera access for this HTTPS site in your browser settings, then try again.";
@@ -33,17 +33,15 @@ function messageFor(error, fallback) {
 
 export default function StudentAcademic() {
   const { user } = useAuth();
+  const navigate = useNavigate();
   const [loading, setLoading] = useState(true);
   const [biometricReady, setBiometricReady] = useState(false);
   const [approvalPending, setApprovalPending] = useState(false);
   const [deletePending, setDeletePending] = useState(false);
-  const [enrollmentCameraActive, setEnrollmentCameraActive] = useState(false);
-  const [enrollmentBusy, setEnrollmentBusy] = useState(false);
   const [checkingQr, setCheckingQr] = useState(false);
   const [scanning, setScanning] = useState(false);
   const [scannerStarting, setScannerStarting] = useState(false);
   const [attendanceBusy, setAttendanceBusy] = useState(false);
-  const [manualQrToken, setManualQrToken] = useState("");
   const [qrTicket, setQrTicket] = useState(null);
   const [assertionId, setAssertionId] = useState("");
   const [notice, setNotice] = useState(null);
@@ -51,10 +49,14 @@ export default function StudentAcademic() {
   const [records, setRecords] = useState([]);
   const [sessions, setSessions] = useState([]);
   const scannerRef = useRef(null);
-  const enrollmentStreamRef = useRef(null);
-  const videoRef = useRef(null);
   const qrHandlingRef = useRef(false);
   const idempotencyKeyRef = useRef(null);
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timeout = window.setTimeout(() => setNotice(null), 7000);
+    return () => window.clearTimeout(timeout);
+  }, [notice]);
 
   useEffect(() => {
     let active = true;
@@ -83,6 +85,15 @@ export default function StudentAcademic() {
       else if (results[0].status === "fulfilled" && results[0].value?.data?.data?.status === "REJECTED") {
         setNotice({ type: "info", text: "Your previous face enrollment was rejected. You can submit a new enrollment after scanning a live QR." });
       }
+      const enrollmentStatus = results[0].status === "fulfilled"
+        ? results[0].value?.data?.data?.status
+        : null;
+      if (
+        results[0].status === "fulfilled" &&
+        !["ACTIVE", "PENDING_APPROVAL", "DELETE_PENDING"].includes(enrollmentStatus)
+      ) {
+        navigate("/student/face-enrollment?required=1", { replace: true });
+      }
       setLoading(false);
     }
     void load();
@@ -96,16 +107,8 @@ export default function StudentAcademic() {
           try { await scanner.clear(); } catch { /* The route is already unmounting. */ }
         })();
       }
-      stopStream(enrollmentStreamRef.current);
-      enrollmentStreamRef.current = null;
     };
-  }, [user?.id]);
-
-  useEffect(() => {
-    if (!enrollmentCameraActive || !videoRef.current || !enrollmentStreamRef.current) return;
-    videoRef.current.srcObject = enrollmentStreamRef.current;
-    videoRef.current.play().catch(() => setNotice({ type: "error", text: "Camera preview could not start. Check camera permission and try again." }));
-  }, [enrollmentCameraActive]);
+  }, [user?.id, navigate]);
 
   const stopScan = async () => {
     const scanner = scannerRef.current;
@@ -133,7 +136,6 @@ export default function StudentAcademic() {
       setQrTicket({ validationId: result.validationId, sessionId: result.sessionId, courseCode: result.courseCode || "Class", section: result.section || "—" });
       setAssertionId("");
       idempotencyKeyRef.current = crypto.randomUUID();
-      setManualQrToken("");
       setNotice({ type: "success", text: "QR verified by the server for " + (result.courseCode || "your class") + " · Section " + (result.section || "—") + ". Now complete the face check." });
     } catch (error) {
       setQrTicket(null);
@@ -204,84 +206,6 @@ export default function StudentAcademic() {
     }
   };
 
-  const startEnrollmentCamera = async () => {
-    setNotice(null);
-    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
-      setNotice({ type: "error", text: "Face enrollment needs HTTPS (or localhost) and browser camera support." }); return;
-    }
-    try {
-      stopStream(enrollmentStreamRef.current);
-      enrollmentStreamRef.current = await navigator.mediaDevices.getUserMedia({ audio: false, video: { facingMode: { ideal: "user" }, width: { ideal: 960 }, height: { ideal: 720 } } });
-      setEnrollmentCameraActive(true);
-    } catch (error) {
-      setNotice({ type: "error", text: cameraErrorMessage(error, messageFor(error, "Could not open the front camera. Allow camera permission and retry.")) });
-    }
-  };
-
-  const stopEnrollmentCamera = () => {
-    stopStream(enrollmentStreamRef.current); enrollmentStreamRef.current = null; setEnrollmentCameraActive(false);
-  };
-
-  const captureAndEnroll = async () => {
-    const video = videoRef.current;
-    if (!video?.videoWidth || !video?.videoHeight || video.readyState < HTMLMediaElement.HAVE_CURRENT_DATA) {
-      setNotice({ type: "error", text: "Camera is still starting. Wait until your face is clearly visible, then try again." });
-      return;
-    }
-    setEnrollmentBusy(true); setNotice(null);
-    try {
-      const scale = Math.min(1, 1280 / Math.max(video.videoWidth, video.videoHeight));
-      const canvas = document.createElement("canvas");
-      canvas.width = Math.max(1, Math.round(video.videoWidth * scale));
-      canvas.height = Math.max(1, Math.round(video.videoHeight * scale));
-      const context = canvas.getContext("2d", { alpha: false });
-      if (!context) throw new Error("Could not capture an enrollment image.");
-      context.drawImage(video, 0, 0, canvas.width, canvas.height);
-      const blob = await new Promise((resolve, reject) => canvas.toBlob(
-        (value) => value ? resolve(value) : reject(new Error("Could not encode the camera image.")), "image/jpeg", 0.82));
-      if (!blob || blob.size > 900 * 1024) throw new Error("The captured face image is too large. Improve lighting and retry.");
-      const response = await enrollBiometric(new File([blob], "student-face-enrollment.jpg", { type: "image/jpeg" }));
-      const status = response?.data?.data?.status || "PENDING_APPROVAL";
-      stopEnrollmentCamera();
-      setDeletePending(false);
-      setAssertionId("");
-      idempotencyKeyRef.current = null;
-      if (status === "PENDING_APPROVAL") {
-        setBiometricReady(false);
-        setApprovalPending(true);
-        setQrTicket(null);
-        setNotice({ type: "success", text: "Face enrollment submitted for lecturer approval. Attendance is blocked until it is approved. After approval, scan the live QR again to check in." });
-      } else if (status === "ACTIVE") {
-        setBiometricReady(true);
-        setApprovalPending(false);
-        setNotice({ type: "success", text: "Face enrollment is active. Continue with the live face/liveness check for this QR." });
-      } else {
-        setBiometricReady(false);
-        setApprovalPending(status === "PENDING_APPROVAL");
-        setNotice({ type: "info", text: "Enrollment submitted. Refresh face status to see whether attendance is enabled." });
-      }
-    } catch (error) {
-      const message = messageFor(error, "Face enrollment failed. Keep your face centered with good lighting and retry.");
-      if (error?.response?.status === 409 && /already exists/i.test(message)) {
-        try {
-          const current = (await getMyBiometricEnrollment())?.data?.data;
-          const status = current?.status;
-          setBiometricReady(status === "ACTIVE");
-          setApprovalPending(status === "PENDING_APPROVAL");
-          setDeletePending(status === "DELETE_PENDING");
-          stopEnrollmentCamera();
-          if (status === "PENDING_APPROVAL") setNotice({ type: "info", text: "Your face enrollment is already waiting for lecturer approval. Attendance will be enabled after approval." });
-          else if (status === "ACTIVE") setNotice({ type: "success", text: "Your face enrollment is already active. Continue with live face/liveness verification." });
-          else setNotice({ type: "error", text: message });
-        } catch {
-          setNotice({ type: "error", text: message });
-        }
-      } else {
-        setNotice({ type: "error", text: message });
-      }
-    } finally { setEnrollmentBusy(false); }
-  };
-
   const refreshBiometricStatus = async () => {
     try {
       const response = await getMyBiometricEnrollment();
@@ -336,7 +260,7 @@ export default function StudentAcademic() {
           <div><p className="academic-eyebrow">STUDENT ATTENDANCE</p><h1>Scan QR, verify your face, check in</h1><p>Welcome {user?.name || "student"}. Scan the live code first. The server validates it before asking for face verification.</p></div>
           <span className="academic-role">{user?.name || "Student"}</span>
         </div>
-        {notice && <div className={"academic-notice " + notice.type} role={notice.type === "error" ? "alert" : "status"}>{notice.text}</div>}
+        {notice && <div className={"academic-notice academic-toast " + notice.type} role={notice.type === "error" ? "alert" : "status"} aria-live={notice.type === "error" ? "assertive" : "polite"}>{notice.text}</div>}
         {approvalPending && <div className="academic-notice info enrollment-pending-notice" role="status"><strong>Face enrollment awaiting approval</strong><span>A lecturer or administrator must approve your enrollment before face verification and attendance are enabled.</span><button type="button" className="academic-button secondary" onClick={() => void refreshBiometricStatus()}>Refresh status</button></div>}
 
         <section className="academic-card student-scan-card">
@@ -346,10 +270,6 @@ export default function StudentAcademic() {
             {!scanning ? <button type="button" className="academic-button" onClick={startScan} disabled={checkingQr || attendanceBusy || scannerStarting}>{scannerStarting ? "Opening camera…" : checkingQr ? "Validating QR…" : "Open camera and scan"}</button> : <button type="button" className="academic-button secondary" onClick={() => void stopScan()}>Stop camera</button>}
             {qrTicket && <button type="button" className="academic-button secondary" onClick={startScan} disabled={checkingQr || attendanceBusy}>Scan again</button>}
           </div>
-          <details className="student-manual-qr"><summary>Enter QR token manually (camera fallback)</summary>
-            <label className="academic-field"><span>QR token</span><input value={manualQrToken} onChange={(event) => setManualQrToken(event.target.value)} placeholder="Paste the token encoded in the lecturer QR" autoComplete="off" /></label>
-            <button type="button" className="academic-button secondary" onClick={() => void validateScannedQr(manualQrToken)} disabled={!manualQrToken.trim() || checkingQr || attendanceBusy}>Validate QR</button>
-          </details>
           <p className="academic-footnote">Camera access requires HTTPS (or localhost). The QR must be live and belong to an active class session where your account is enrolled.</p>
           {qrTicket && <div className="student-checkin-form"><p className="academic-eyebrow">SERVER-VALIDATED QR</p><h3>{qrTicket.courseCode} · Section {qrTicket.section}</h3><p className="academic-footnote">The server accepted this QR. Complete the face step below before the short-lived check-in authorization expires.</p></div>}
         </section>
@@ -358,13 +278,7 @@ export default function StudentAcademic() {
           <div className="academic-card-title"><span className="academic-step">02</span><div><h2>Verify your face and liveness</h2><p>This step appears only after the QR is accepted by the server.</p></div></div>
           {deletePending ? <div className="academic-notice error" role="alert">Face enrollment deletion is pending, so attendance is blocked.<button type="button" className="academic-button secondary" onClick={() => void refreshBiometricStatus()}>Refresh face status</button></div> :
             approvalPending ? <div className="academic-notice info" role="status">Your enrollment is waiting for lecturer/admin approval. After approval, scan the lecturer’s live QR again.</div> :
-            !biometricReady ? <div className="student-setup-item student-enrollment-camera">
-              <div className="student-setup-copy"><strong>One-time face enrollment</strong><span>Enroll your face once. Later check-ins will use live face matching and liveness verification against this enrollment.</span></div>
-              {enrollmentCameraActive && <video ref={videoRef} className="active-liveness-video" autoPlay playsInline muted aria-label="Live front camera preview for one-time face enrollment" />}
-              {!enrollmentCameraActive ? <button type="button" className="academic-button" onClick={() => void startEnrollmentCamera()} disabled={enrollmentBusy || checkingQr}>Open front camera</button> :
-                <div className="active-liveness-actions"><button type="button" className="academic-button" onClick={() => void captureAndEnroll()} disabled={enrollmentBusy}>{enrollmentBusy ? "Enrolling face…" : "Capture and enroll face"}</button><button type="button" className="academic-button secondary" onClick={stopEnrollmentCamera} disabled={enrollmentBusy}>Cancel camera</button></div>}
-              <p className="academic-footnote">Use good lighting and keep your face centered. Enrollment is sent to the configured biometric provider.</p>
-            </div> :
+            !biometricReady ? <div className="academic-notice info" role="status">Face enrollment is required before attendance can be verified. <Link to="/student/face-enrollment?required=1">Open secure face setup</Link></div> :
             <>
               <ActiveLivenessCapture sessionId={qrTicket.sessionId} disabled={attendanceBusy || checkingQr} onVerified={(id) => { void recordAttendance(id); }} />
               {assertionId && <button type="button" className="academic-button secondary" onClick={() => void recordAttendance(assertionId)} disabled={attendanceBusy}>{attendanceBusy ? "Recording attendance…" : "Retry attendance submission"}</button>}
