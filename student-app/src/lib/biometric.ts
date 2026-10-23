@@ -5,9 +5,14 @@ export async function getBiometricEnrollment(token: string) {
   return response.data ?? null;
 }
 
-export async function enrollFace(token: string, imageUri: string) {
+export async function enrollFace(token: string, imageUri: string, consentGiven: boolean) {
+  if (!consentGiven) {
+    throw new Error("Explicit consent is required before creating a biometric profile.");
+  }
   const form = new FormData();
   form.append("image", { uri: imageUri, name: "enrollment.jpg", type: "image/jpeg" } as any);
+  form.append("consent", "true");
+  form.append("consentVersion", "face-attendance-v1");
   return apiRequest<any>("/biometric/enroll", {
     method: "POST",
     token,

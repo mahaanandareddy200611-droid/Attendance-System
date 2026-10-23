@@ -16,9 +16,9 @@ import {
 
 import { useStudentAuth } from "../../src/auth/AuthProvider";
 import {
-  captureLocationEvidence,
   getAvailableSessions,
-  submitAttendance,
+  validateAttendanceQr,
+  submitValidatedAttendance,
 } from "../../src/lib/attendance";
 import {
   deleteFaceEnrollment,
@@ -27,13 +27,6 @@ import {
   issueActiveLivenessChallenge,
   verifyActiveLiveness,
 } from "../../src/lib/biometric";
-import { apiRequest } from "../../src/lib/api";
-import {
-  getOrRegisterNativeDevice,
-  getStoredNativeDeviceId,
-  hasNativeDeviceKey,
-  removeNativeDeviceKey,
-} from "../../src/lib/device";
 import { deleteTemporaryPhotos } from "../../src/lib/photos";
 
 type Session = {
@@ -46,18 +39,18 @@ type Session = {
 };
 
 type CameraMode = "none" | "enroll" | "liveness" | "scan";
-type LocationEvidence = {
-  latitude: number;
-  longitude: number;
-  accuracyMeters: number;
-  capturedAt: string;
+type ValidationTicket = {
+  validationId: string;
+  sessionId: string;
+  courseCode?: string;
+  section?: string;
+  expiresInMs?: number;
 };
 type PendingAttempt = {
   sessionId: string;
-  qrToken: string;
+  validationId: string;
   idempotencyKey: string;
   biometricAssertionId: string;
-  location: LocationEvidence;
 };
 
 function getMessage(error: unknown) {
@@ -86,16 +79,6 @@ function extractQrToken(value: string) {
   return trimmed;
 }
 
-function readTokenSessionId(token: string): string | null {
-  try {
-    const firstPart = token.split(".")[0].replace(/-/g, "+").replace(/_/g, "/");
-    const bytes = Uint8Array.from(atob(firstPart), (character) => character.charCodeAt(0));
-    const payload = JSON.parse(new TextDecoder().decode(bytes));
-    return typeof payload.sid === "string" ? payload.sid : null;
-  } catch {
-    return null;
-  }
-}
 
 export default function CheckInScreen() {
   const { user, token, loading: authLoading, login, logout } = useStudentAuth();
@@ -103,6 +86,11 @@ export default function CheckInScreen() {
   const cameraRef = useRef<CameraView>(null);
   const scannerLock = useRef(false);
   const captureLock = useRef(false);
+  const automaticEnrollmentCapture = useRef(false);
+  const automaticLivenessCapture = useRef(false);
+  const autoStartedTicketId = useRef("");
+  const challengeStartedForTicket = useRef("");
+  const challengeRequestInFlight = useRef(false);
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -116,13 +104,12 @@ export default function CheckInScreen() {
 
   const [sessions, setSessions] = useState<Session[]>([]);
   const [sessionId, setSessionId] = useState("");
-  const [deviceId, setDeviceId] = useState("");
-  const [deviceReady, setDeviceReady] = useState(false);
-  const [deviceConflict, setDeviceConflict] = useState("");
-  const [deviceBusy, setDeviceBusy] = useState(false);
   const [biometricStatus, setBiometricStatus] = useState("MISSING");
   const [biometricBusy, setBiometricBusy] = useState(false);
-  const [locationEvidence, setLocationEvidence] = useState<LocationEvidence | null>(null);
+  const [faceConsentAccepted, setFaceConsentAccepted] = useState(false);
+  const [enrollmentCountdown, setEnrollmentCountdown] = useState<number | null>(null);
+  const [livenessCountdown, setLivenessCountdown] = useState<number | null>(null);
+  const [validationTicket, setValidationTicket] = useState<ValidationTicket | null>(null);
   const [activeChallenge, setActiveChallenge] = useState<Awaited<ReturnType<typeof issueActiveLivenessChallenge>> | null>(null);
   const [frameUris, setFrameUris] = useState<string[]>([]);
   const [assertionId, setAssertionId] = useState("");
@@ -132,6 +119,12 @@ export default function CheckInScreen() {
     setNotice(message);
     setNoticeKind(kind);
   }, []);
+
+  useEffect(() => {
+    if (!notice) return undefined;
+    const timeout = setTimeout(() => setNotice(""), 7000);
+    return () => clearTimeout(timeout);
+  }, [notice]);
 
   const reloadData = useCallback(async () => {
     if (!token || !user) return;
@@ -143,39 +136,8 @@ export default function CheckInScreen() {
       ]);
       if (sessionResult.status === "fulfilled") setSessions(sessionResult.value as Session[]);
       else showNotice(getMessage(sessionResult.reason), "error");
-
-      if (biometricResult.status === "fulfilled") {
-        setBiometricStatus(biometricResult.value?.status || "MISSING");
-      } else {
-        showNotice(getMessage(biometricResult.reason), "error");
-      }
-
-      const localKeyExists = await hasNativeDeviceKey(user.id);
-      const localId = await getStoredNativeDeviceId(user.id);
-      try {
-        const remote = await apiRequest<any>("/devices/me", { token });
-        const credential = remote.data;
-        if (
-          localKeyExists &&
-          localId &&
-          credential?.status === "ACTIVE" &&
-          credential?.deviceId === localId
-        ) {
-          setDeviceId(localId);
-          setDeviceReady(true);
-          setDeviceConflict("");
-        } else if (credential?.status === "ACTIVE") {
-          setDeviceId("");
-          setDeviceReady(false);
-          setDeviceConflict(String(credential.deviceId || "another registered device"));
-        } else {
-          setDeviceId("");
-          setDeviceReady(false);
-          setDeviceConflict("");
-        }
-      } catch (error) {
-        showNotice("Could not check device registration: " + getMessage(error), "error");
-      }
+      if (biometricResult.status === "fulfilled") setBiometricStatus(biometricResult.value?.status || "MISSING");
+      else showNotice(getMessage(biometricResult.reason), "error");
     } finally {
       setLoading(false);
     }
@@ -186,55 +148,41 @@ export default function CheckInScreen() {
     else {
       setSessions([]);
       setSessionId("");
-      setDeviceReady(false);
-      setDeviceId("");
       setBiometricStatus("MISSING");
+      setFaceConsentAccepted(false);
+      setValidationTicket(null);
+      setActiveChallenge(null);
+      setFrameUris([]);
+      setAssertionId("");
+      setPendingAttempt(null);
     }
   }, [token, user, reloadData]);
 
-  const ensureCameraPermission = async () => {
+  const ensureCameraPermission = useCallback(async () => {
     if (cameraPermission?.granted) return true;
     const next = await requestCameraPermission();
     if (!next.granted) {
-      showNotice("Camera permission is required for enrollment, liveness and QR scanning.", "error");
+      showNotice("Camera permission is required for consented face enrollment, liveness and QR scanning.", "error");
       return false;
     }
     return true;
-  };
+  }, [cameraPermission?.granted, requestCameraPermission, showNotice]);
 
-  const registerDevice = async (replaceExisting: boolean) => {
-    if (!user || !token) return;
-    setDeviceBusy(true);
-    try {
-      if (deviceConflict) {
-        if (!replaceExisting) {
-          showNotice("Another device is active. Confirm replacement only if you want this phone to become your registered device.", "error");
-          return;
-        }
-        await apiRequest("/devices/me", { method: "DELETE", token });
-        await removeNativeDeviceKey(user.id);
-      }
-      const nextId = await getOrRegisterNativeDevice(user.id, token);
-      setDeviceId(nextId);
-      setDeviceReady(true);
-      setDeviceConflict("");
-      showNotice("This phone is registered. Its signing seed stays in the phone's secure storage.", "success");
-    } catch (error) {
-      showNotice(getMessage(error), "error");
-    } finally {
-      setDeviceBusy(false);
+  const openEnrollmentCamera = useCallback(async () => {
+    if (!faceConsentAccepted) {
+      showNotice("Read and accept the face-enrollment notice before enabling the camera.", "error");
+      return;
     }
-  };
-
-  const openEnrollmentCamera = async () => {
     if (!await ensureCameraPermission()) return;
+    automaticEnrollmentCapture.current = false;
     setCameraReady(false);
     setCameraMode("enroll");
-  };
+    showNotice("Face enrollment has started. Keep your face visible; the camera captures automatically after a short on-screen countdown.");
+  }, [faceConsentAccepted, ensureCameraPermission, showNotice]);
 
-  const captureEnrollment = async () => {
-    if (!cameraRef.current || !cameraReady || busy) {
-      showNotice("Wait for the camera preview to be ready.", "error");
+  const captureEnrollment = useCallback(async () => {
+    if (!cameraRef.current || !cameraReady || busy || !faceConsentAccepted || !token) {
+      showNotice("Wait for the live camera preview and consent before capture.", "error");
       return;
     }
     setBusy(true);
@@ -245,10 +193,15 @@ export default function CheckInScreen() {
       imageUri = photo.uri;
       setCameraMode("none");
       setBiometricBusy(true);
-      await enrollFace(token!, imageUri);
-      setBiometricStatus("ACTIVE");
+      const response = await enrollFace(token, imageUri, faceConsentAccepted);
+      const status = response.data?.status || "PENDING_APPROVAL";
+      setBiometricStatus(status);
       setAssertionId("");
-      showNotice("Face enrollment completed by the biometric provider.", "success");
+      if (status === "ACTIVE") {
+        showNotice("Face enrollment is active. A live QR and face/liveness check are still required for every attendance check-in.", "success");
+      } else {
+        showNotice("Face enrollment submitted for lecturer approval. Attendance stays disabled until approval; do not submit another image while this request is pending.", "info");
+      }
     } catch (error) {
       showNotice(getMessage(error), "error");
     } finally {
@@ -256,7 +209,40 @@ export default function CheckInScreen() {
       setBiometricBusy(false);
       setBusy(false);
     }
-  };
+  }, [cameraReady, busy, faceConsentAccepted, token, showNotice]);
+
+  useEffect(() => {
+    if (
+      cameraMode !== "enroll" ||
+      !cameraReady ||
+      !faceConsentAccepted ||
+      busy ||
+      biometricBusy ||
+      automaticEnrollmentCapture.current
+    ) return undefined;
+
+    automaticEnrollmentCapture.current = true;
+    setEnrollmentCountdown(2);
+    let fired = false;
+    const interval = setInterval(() => {
+      setEnrollmentCountdown((remaining) => remaining !== null && Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+    }, 1000);
+    const timeout = setTimeout(() => {
+      fired = true;
+      automaticEnrollmentCapture.current = false;
+      setEnrollmentCountdown(null);
+      void captureEnrollment();
+    }, 2100);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (!fired) {
+        automaticEnrollmentCapture.current = false;
+        setEnrollmentCountdown(null);
+      }
+    };
+  }, [cameraMode, cameraReady, faceConsentAccepted, busy, biometricBusy, captureEnrollment]);
 
   const removeFace = () => {
     Alert.alert(
@@ -293,55 +279,25 @@ export default function CheckInScreen() {
     );
   };
 
-  const captureLocation = async () => {
-    setBusy(true);
-    try {
-      const location = await captureLocationEvidence();
-      setLocationEvidence(location);
-      showNotice(
-        "Location captured with approximately " + Math.round(location.accuracyMeters) + " m accuracy. Complete liveness, then scan the QR immediately.",
-        "success",
-      );
-    } catch (error) {
-      setLocationEvidence(null);
-      showNotice(getMessage(error), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
-
-  const startLiveness = async () => {
-    if (!token || !sessionId) {
-      showNotice("Select an active attendance session first.", "error");
+  const startLiveness = useCallback(async () => {
+    if (!token || !sessionId || !validationTicket) {
+      showNotice("Scan and validate the selected class QR before face/liveness verification.", "error");
       return;
     }
-    if (!deviceReady || biometricStatus !== "ACTIVE" || !locationEvidence) {
-      showNotice("Register this phone, enroll your face and capture location before starting liveness.", "error");
-      return;
-    }
-    if (!await ensureCameraPermission()) return;
-    setBusy(true);
-    try {
-      const challenge = await issueActiveLivenessChallenge(token, sessionId);
-      setActiveChallenge(challenge);
-      setFrameUris([]);
-      setAssertionId("");
-      setPendingAttempt(null);
-      setCameraReady(false);
-      captureLock.current = false;
-      setCameraMode("liveness");
-      showNotice("Follow the server's randomized camera instructions. The challenge is short-lived.");
-    } catch (error) {
-      showNotice(getMessage(error), "error");
-    } finally {
-      setBusy(false);
-    }
-  };
+    setFrameUris([]);
+    setActiveChallenge(null);
+    captureLock.current = false;
+    automaticLivenessCapture.current = false;
+    setLivenessCountdown(null);
+    setCameraReady(false);
+    setCameraMode("liveness");
+    showNotice("QR accepted. Opening the front camera; the secure challenge starts after the live preview is ready.", "info");
+  }, [token, sessionId, validationTicket, showNotice]);
 
-  const captureLivenessFrame = async () => {
+  const captureLivenessFrame = useCallback(async () => {
     if (captureLock.current || busy) return;
-    if (!cameraRef.current || !cameraReady || !activeChallenge || !token || !sessionId) {
-      showNotice("Wait for the camera preview to be ready.", "error");
+    if (!cameraRef.current || !cameraReady || !activeChallenge || !token || !sessionId || !validationTicket) {
+      showNotice("Wait for the visible camera preview and active QR ticket.", "error");
       return;
     }
 
@@ -355,12 +311,14 @@ export default function CheckInScreen() {
       setFrameUris(newUris);
 
       if (newUris.length < 3) {
-        showNotice("Captured frame " + newUris.length + " of 3. Next: " + activeChallenge.steps[newUris.length].instruction);
+        const nextInstruction = activeChallenge.steps[newUris.length]?.instruction || "Keep your face visible";
+        showNotice("Frame " + newUris.length + " of 3 received. Next prompt: " + nextInstruction + ". Capture continues automatically.", "info");
         return;
       }
 
       setCameraMode("none");
-      showNotice("Checking frame order, face identity and provider liveness…");
+      setCameraReady(false);
+      showNotice("Checking face identity and active liveness with the configured provider…", "info");
       const nextAssertion = await verifyActiveLiveness({
         token,
         sessionId,
@@ -368,92 +326,88 @@ export default function CheckInScreen() {
         challenge: activeChallenge.challenge,
         frames: newUris,
       });
-      // Remove the camera images from the local cache after the provider has
-      // finished verifying them. The server stores only the resulting assertion.
       await deleteTemporaryPhotos(newUris);
       setAssertionId(nextAssertion);
       setActiveChallenge(null);
       setFrameUris([]);
-      showNotice("Verification passed. The QR scanner is opening; scan the lecturer's current QR now.", "success");
-      scannerLock.current = false;
-      setCameraReady(false);
-      setCameraMode("scan");
+      showNotice("Face match and liveness passed. Attendance is being recorded automatically.", "success");
     } catch (error) {
-      await deleteTemporaryPhotos(newUris);
+      await deleteTemporaryPhotos([...newUris, ...frameUris]);
       setFrameUris([]);
       setActiveChallenge(null);
       setAssertionId("");
+      setCameraReady(false);
       setCameraMode("none");
-      showNotice(getMessage(error) + " Start a new liveness challenge before trying again.", "error");
+      setValidationTicket(null);
+      autoStartedTicketId.current = "";
+      scannerLock.current = false;
+      showNotice(getMessage(error) + " Scan a fresh QR and repeat the face check.", "error");
     } finally {
       captureLock.current = false;
       setBusy(false);
     }
-  };
+  }, [busy, cameraReady, activeChallenge, token, sessionId, validationTicket, frameUris, showNotice]);
 
-  const executeAttendanceAttempt = async (attempt: PendingAttempt) => {
-    if (!user || !token || !deviceId) return;
+  const executeAttendanceAttempt = useCallback(async (attempt: PendingAttempt) => {
+    if (!token) return;
     setBusy(true);
     try {
-      const response = await submitAttendance({
-        userId: user.id,
+      const response = await submitValidatedAttendance({
         token,
-        deviceId,
-        sessionId: attempt.sessionId,
-        qrToken: attempt.qrToken,
-        idempotencyKey: attempt.idempotencyKey,
+        validationId: attempt.validationId,
         biometricAssertionId: attempt.biometricAssertionId,
-        location: attempt.location,
+        idempotencyKey: attempt.idempotencyKey,
       });
       setPendingAttempt(null);
       setAssertionId("");
-      setLocationEvidence(null);
+      setValidationTicket(null);
       setFrameUris([]);
       setActiveChallenge(null);
       setCameraMode("none");
       scannerLock.current = false;
+      autoStartedTicketId.current = "";
+      challengeStartedForTicket.current = "";
       showNotice(response.message || "Attendance marked successfully.", "success");
       await reloadData();
     } catch (error) {
       const status = errorStatus(error);
       if (!status || status >= 500 || status === 429) {
         setPendingAttempt(attempt);
-        showNotice(
-          "The server did not confirm the result. Retry the exact same attempt to recover its idempotent result. " + getMessage(error),
-          "error",
-        );
+        showNotice("The server did not confirm the result. Retry the exact same attempt to recover its idempotent result. " + getMessage(error), "error");
       } else {
         setPendingAttempt(null);
         setAssertionId("");
+        setValidationTicket(null);
         setCameraMode("none");
-        showNotice(getMessage(error) + " Capture a new liveness assertion and scan a fresh QR.", "error");
+        scannerLock.current = false;
+        autoStartedTicketId.current = "";
+        challengeStartedForTicket.current = "";
+        showNotice(getMessage(error) + " The QR ticket may have expired. Scan the current QR and repeat face verification.", "error");
       }
     } finally {
       setBusy(false);
     }
-  };
+  }, [token, reloadData, showNotice]);
 
   const onQrScanned = async (value: string) => {
-    if (scannerLock.current || busy || !sessionId || !assertionId || !locationEvidence || !token) return;
+    if (scannerLock.current || busy || !sessionId || !token || biometricStatus !== "ACTIVE") return;
     scannerLock.current = true;
     try {
       const qrToken = extractQrToken(value);
-      const tokenSessionId = readTokenSessionId(qrToken);
-      if (tokenSessionId && tokenSessionId !== sessionId) {
-        throw new Error("This QR belongs to another session. Keep the selected session and scan its QR.");
+      const ticket = await validateAttendanceQr(token, qrToken);
+      if (ticket.sessionId !== sessionId) {
+        throw new Error("This QR belongs to another class session. Select the correct session and scan its QR.");
       }
-      const attempt: PendingAttempt = {
-        sessionId,
-        qrToken,
-        idempotencyKey: Crypto.randomUUID(),
-        biometricAssertionId: assertionId,
-        location: locationEvidence,
-      };
-      setPendingAttempt(attempt);
+      setValidationTicket(ticket);
+      setAssertionId("");
+      setActiveChallenge(null);
+      setFrameUris([]);
+      setPendingAttempt(null);
+      setCameraReady(false);
       setCameraMode("none");
-      // Submit immediately from the barcode callback. Do not wait for another
-      // button press after a 250 ms-class QR has been decoded.
-      await executeAttendanceAttempt(attempt);
+      autoStartedTicketId.current = "";
+      challengeStartedForTicket.current = "";
+      showNotice("Live QR validated by the server. Face matching and liveness will now start automatically.", "success");
     } catch (error) {
       scannerLock.current = false;
       setCameraMode("none");
@@ -461,34 +415,152 @@ export default function CheckInScreen() {
     }
   };
 
-  const openScanner = async () => {
-    if (!assertionId || !locationEvidence || !deviceReady) {
-      showNotice("Register the device, capture location and complete active liveness first.", "error");
+  const openScanner = useCallback(async () => {
+    if (!sessionId || !token) {
+      showNotice("Select an active class session first.", "error");
+      return;
+    }
+    if (biometricStatus !== "ACTIVE") {
+      showNotice("Complete face enrollment and wait for lecturer approval before check-in.", "error");
       return;
     }
     if (!await ensureCameraPermission()) return;
     scannerLock.current = false;
-    setCameraReady(false);
-    setCameraMode("scan");
-    showNotice("Point the back camera at the selected session's current QR. Attendance submits immediately after decode.");
-  };
-
-  const selectSession = (nextSessionId: string) => {
-    // A session switch abandons any partially captured liveness frames.
-    void deleteTemporaryPhotos(frameUris);
-    setSessionId(nextSessionId);
+    setValidationTicket(null);
     setAssertionId("");
     setActiveChallenge(null);
     setFrameUris([]);
-    setLocationEvidence(null);
+    setPendingAttempt(null);
+    autoStartedTicketId.current = "";
+    challengeStartedForTicket.current = "";
+    setCameraReady(false);
+    setCameraMode("scan");
+    showNotice("Scan the lecturer's current QR. After the server validates it, face matching and liveness run automatically.", "info");
+  }, [sessionId, token, biometricStatus, ensureCameraPermission, showNotice]);
+
+  const selectSession = (nextSessionId: string) => {
+    void deleteTemporaryPhotos(frameUris);
+    setSessionId(nextSessionId);
+    setValidationTicket(null);
+    setAssertionId("");
+    setActiveChallenge(null);
+    setFrameUris([]);
     setPendingAttempt(null);
     setCameraMode("none");
+    setCameraReady(false);
     scannerLock.current = false;
-    showNotice("Session selected. Capture location, finish liveness and then scan its fresh QR.");
+    captureLock.current = false;
+    automaticLivenessCapture.current = false;
+    autoStartedTicketId.current = "";
+    challengeStartedForTicket.current = "";
+    showNotice("Class selected. Scan its live QR first; the app then runs the visible face/liveness check.", "info");
   };
 
+  useEffect(() => {
+    if (
+      cameraMode !== "liveness" ||
+      !cameraReady ||
+      activeChallenge ||
+      busy ||
+      !validationTicket ||
+      !token ||
+      !sessionId ||
+      challengeRequestInFlight.current ||
+      challengeStartedForTicket.current === validationTicket.validationId
+    ) return;
+
+    challengeStartedForTicket.current = validationTicket.validationId;
+    challengeRequestInFlight.current = true;
+    setBusy(true);
+    void issueActiveLivenessChallenge(token, sessionId)
+      .then((challenge) => {
+        setFrameUris([]);
+        setActiveChallenge(challenge);
+        showNotice("Camera ready. Follow each visible instruction; three live frames will be captured automatically.", "info");
+      })
+      .catch((error) => {
+        setActiveChallenge(null);
+        setFrameUris([]);
+        setAssertionId("");
+        setValidationTicket(null);
+        autoStartedTicketId.current = "";
+        challengeStartedForTicket.current = "";
+        scannerLock.current = false;
+        setCameraMode("none");
+        setCameraReady(false);
+        showNotice(getMessage(error) + " Scan the lecturer's current QR again.", "error");
+      })
+      .finally(() => {
+        challengeRequestInFlight.current = false;
+        setBusy(false);
+      });
+  }, [cameraMode, cameraReady, activeChallenge, busy, validationTicket, token, sessionId, showNotice]);
+
+  useEffect(() => {
+    if (
+      !validationTicket ||
+      !token ||
+      !sessionId ||
+      validationTicket.sessionId !== sessionId ||
+      cameraMode !== "none" ||
+      busy ||
+      activeChallenge ||
+      assertionId ||
+      pendingAttempt ||
+      autoStartedTicketId.current === validationTicket.validationId
+    ) return;
+    autoStartedTicketId.current = validationTicket.validationId;
+    void startLiveness();
+  }, [validationTicket, token, sessionId, cameraMode, busy, activeChallenge, assertionId, pendingAttempt, startLiveness]);
+
+  useEffect(() => {
+    const step = activeChallenge?.steps?.[frameUris.length];
+    if (
+      cameraMode !== "liveness" ||
+      !cameraReady ||
+      !activeChallenge ||
+      !step ||
+      busy ||
+      automaticLivenessCapture.current
+    ) return undefined;
+
+    automaticLivenessCapture.current = true;
+    setLivenessCountdown(2);
+    let fired = false;
+    const interval = setInterval(() => {
+      setLivenessCountdown((remaining) => remaining !== null && Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
+    }, 1000);
+    const timeout = setTimeout(() => {
+      fired = true;
+      automaticLivenessCapture.current = false;
+      setLivenessCountdown(null);
+      void captureLivenessFrame();
+    }, 2100);
+
+    return () => {
+      clearInterval(interval);
+      clearTimeout(timeout);
+      if (!fired) {
+        automaticLivenessCapture.current = false;
+        setLivenessCountdown(null);
+      }
+    };
+  }, [cameraMode, cameraReady, activeChallenge, frameUris.length, busy, captureLivenessFrame]);
+
+  useEffect(() => {
+    if (!validationTicket || !assertionId || busy || pendingAttempt) return;
+    const attempt: PendingAttempt = {
+      sessionId: validationTicket.sessionId,
+      validationId: validationTicket.validationId,
+      idempotencyKey: Crypto.randomUUID(),
+      biometricAssertionId: assertionId,
+    };
+    setPendingAttempt(attempt);
+    void executeAttendanceAttempt(attempt);
+  }, [validationTicket, assertionId, busy, pendingAttempt, executeAttendanceAttempt]);
+
   if (authLoading) {
-    return <View style={styles.center}><ActivityIndicator size="large" color="#3157d5" /><Text style={styles.muted}>Restoring secure student session…</Text></View>;
+    return <View style={styles.center}><ActivityIndicator size="large" color="#63d7bf" /><Text style={styles.muted}>Restoring secure student session…</Text></View>;
   }
 
   if (!user || !token) {
@@ -498,7 +570,7 @@ export default function CheckInScreen() {
           <View style={styles.brandMark}><Text style={styles.brandMarkText}>A</Text></View>
           <Text style={styles.eyebrow}>ATTENDANCE SYSTEM</Text>
           <Text style={styles.title}>Student check-in</Text>
-          <Text style={styles.subtitle}>Sign in to register your phone, verify your face and mark attendance for an active class.</Text>
+          <Text style={styles.subtitle}>Set up verification once, then scan your lecturer&apos;s live QR. Camera-based matching and liveness run automatically while the camera indicator stays visible.</Text>
           <View style={styles.card}>
             <Text style={styles.label}>College email</Text>
             <TextInput
@@ -541,9 +613,9 @@ export default function CheckInScreen() {
             </Pressable>
             <Text style={styles.footnote}>Use your existing college Student account. Admin and Lecturer accounts are rejected by this app.</Text>
           </View>
-          {notice ? <Notice message={notice} kind={noticeKind} /> : null}
           <Text style={styles.footer}>Your camera frames are sent for verification only. This screen does not upload them to retained-evidence storage.</Text>
         </ScrollView>
+        {notice ? <View style={styles.toastContainer} pointerEvents="box-none"><Notice message={notice} kind={noticeKind} /></View> : null}
       </KeyboardAvoidingView>
     );
   }
@@ -565,7 +637,6 @@ export default function CheckInScreen() {
           </Pressable>
         </View>
 
-        {notice ? <Notice message={notice} kind={noticeKind} /> : null}
 
         <View style={styles.card}>
           <View style={styles.sectionHeader}>
@@ -574,26 +645,49 @@ export default function CheckInScreen() {
               <Text style={styles.link}>{loading ? "Refreshing…" : "Refresh"}</Text>
             </Pressable>
           </View>
-          <SetupRow title="Phone device key" detail={deviceReady ? "Registered and active" : deviceConflict ? "Another device is registered" : "Not registered"} ready={deviceReady} />
-          <SetupRow title="Face enrollment" detail={biometricStatus === "ACTIVE" ? "Enrolled" : biometricStatus === "DELETE_PENDING" ? "Deletion pending; check-in disabled" : "Not enrolled"} ready={biometricStatus === "ACTIVE"} />
-          <SetupRow title="Location" detail={locationEvidence ? "Accuracy approximately " + Math.round(locationEvidence.accuracyMeters) + " m" : "Capture before the QR scan"} ready={Boolean(locationEvidence)} />
-          {!deviceReady && (
-            <Pressable style={[styles.button, deviceBusy && styles.buttonDisabled]} disabled={deviceBusy} onPress={() => void registerDevice(false)}>
-              <Text style={styles.buttonText}>{deviceBusy ? "Registering…" : deviceConflict ? "Replace registered device…" : "Register this phone"}</Text>
-            </Pressable>
-          )}
-          {deviceConflict ? (
-            <View style={styles.warningBox}>
-              <Text style={styles.warningText}>Registered device: {deviceConflict}. Replacing it revokes the currently active device so only this phone can submit attendance.</Text>
-              <Pressable style={styles.dangerButton} disabled={deviceBusy} onPress={() => void registerDevice(true)}>
-                <Text style={styles.buttonText}>{deviceBusy ? "Replacing…" : "Confirm replacement"}</Text>
+          <SetupRow
+            title="Face enrollment"
+            detail={biometricStatus === "ACTIVE"
+              ? "Approved and active"
+              : biometricStatus === "PENDING_APPROVAL"
+                ? "Waiting for lecturer approval"
+                : biometricStatus === "DELETE_PENDING"
+                  ? "Deletion pending; check-in disabled"
+                  : "Enrollment required"}
+            ready={biometricStatus === "ACTIVE"}
+          />
+          {!["ACTIVE", "PENDING_APPROVAL", "DELETE_PENDING"].includes(biometricStatus) ? (
+            <View style={styles.faceConsentPanel}>
+              <Pressable
+                style={styles.consentRow}
+                accessibilityRole="checkbox"
+                accessibilityState={{ checked: faceConsentAccepted }}
+                onPress={() => setFaceConsentAccepted((checked) => !checked)}
+              >
+                <View style={[styles.consentBox, faceConsentAccepted && styles.consentBoxChecked]}>
+                  {faceConsentAccepted ? <Text style={styles.consentCheckmark}>✓</Text> : null}
+                </View>
+                <Text style={styles.consentText}>
+                  I agree to face processing for attendance. After I start enrollment, the front camera preview remains visible and one live image is captured automatically. The provider creates the face profile used for matching; the attendance database stores a profile reference and consent metadata, not a raw face image or vector.
+                </Text>
               </Pressable>
+              <Pressable
+                style={[styles.button, (!faceConsentAccepted || busy || biometricBusy) && styles.buttonDisabled]}
+                disabled={!faceConsentAccepted || busy || biometricBusy}
+                onPress={() => void openEnrollmentCamera()}
+              >
+                <Text style={styles.buttonText}>{biometricBusy ? "Submitting enrollment…" : "Start camera and enroll automatically"}</Text>
+              </Pressable>
+              <Text style={styles.footnote}>A lecturer or administrator must approve this enrollment before attendance is enabled.</Text>
             </View>
           ) : null}
-          {biometricStatus !== "ACTIVE" && biometricStatus !== "DELETE_PENDING" ? (
-            <Pressable style={styles.button} disabled={busy || biometricBusy} onPress={() => void openEnrollmentCamera()}>
-              <Text style={styles.buttonText}>{biometricBusy ? "Enrolling…" : "Capture face enrollment"}</Text>
-            </Pressable>
+          {biometricStatus === "PENDING_APPROVAL" ? (
+            <View style={styles.notice}>
+              <Text style={styles.noticeText}>Your face enrollment is waiting for review. Do not submit it again; attendance stays disabled until an authorized lecturer or administrator approves it.</Text>
+              <Pressable style={styles.secondaryButton} disabled={loading} onPress={() => void reloadData()}>
+                <Text style={styles.secondaryButtonText}>Refresh approval status</Text>
+              </Pressable>
+            </View>
           ) : null}
           {biometricStatus === "ACTIVE" ? (
             <Pressable style={styles.secondaryButton} disabled={biometricBusy} onPress={removeFace}>
@@ -633,32 +727,37 @@ export default function CheckInScreen() {
         {selectedSession && (
           <View style={styles.card}>
             <Text style={styles.cardTitle}>Check in: {selectedSession.courseCode || "Course"} · {selectedSession.section || "Section"}</Text>
-            <Text style={styles.subtitle}>Prepare location first. Complete the server&apos;s randomized center/left/right camera sequence. Once it passes, the QR scanner opens and submits automatically after reading the selected session&apos;s fresh QR.</Text>
+            <Text style={styles.subtitle}>Scan the lecturer&apos;s current QR first. Once the server validates it, the app automatically captures visible live-camera frames for face matching and liveness, then saves attendance.</Text>
             <Pressable
-              style={styles.secondaryButton}
-              disabled={busy}
-              onPress={() => void captureLocation()}
+              style={[styles.button, (biometricStatus !== "ACTIVE" || busy || cameraMode !== "none") && styles.buttonDisabled]}
+              disabled={biometricStatus !== "ACTIVE" || busy || cameraMode !== "none"}
+              onPress={() => void openScanner()}
             >
-              <Text style={styles.secondaryButtonText}>{busy && !locationEvidence ? "Getting location…" : locationEvidence ? "Refresh location" : "Get current location"}</Text>
+              <Text style={styles.buttonText}>{busy ? "Processing check-in…" : "Scan QR and check in"}</Text>
             </Pressable>
-            {locationEvidence ? (
-              <Text style={styles.footnote}>Captured {new Date(locationEvidence.capturedAt).toLocaleTimeString()} · accuracy ±{Math.round(locationEvidence.accuracyMeters)} m</Text>
+            {validationTicket && !assertionId && !pendingAttempt ? (
+              <Notice message="QR verified. Follow the live camera prompts; face and liveness frames are captured automatically." kind="info" />
             ) : null}
-            <Pressable
-              style={[styles.button, (!deviceReady || biometricStatus !== "ACTIVE" || !locationEvidence || busy) && styles.buttonDisabled]}
-              disabled={!deviceReady || biometricStatus !== "ACTIVE" || !locationEvidence || busy}
-              onPress={() => void startLiveness()}
-            >
-              <Text style={styles.buttonText}>{busy ? "Please wait…" : "Start face & liveness check"}</Text>
-            </Pressable>
-            {assertionId && cameraMode === "none" ? (
-              <Text style={styles.successText}>Liveness passed. Scan the current QR to submit attendance.</Text>
+            {assertionId && validationTicket ? (
+              <Text style={styles.successText}>Face match and liveness passed. Attendance is being saved automatically.</Text>
+            ) : null}
+            {validationTicket && !activeChallenge && !assertionId && !pendingAttempt && cameraMode === "none" && !busy ? (
+              <Pressable
+                style={styles.secondaryButton}
+                onPress={() => {
+                  autoStartedTicketId.current = validationTicket.validationId;
+                  challengeStartedForTicket.current = "";
+                  void startLiveness();
+                }}
+              >
+                <Text style={styles.secondaryButtonText}>Retry face verification for this QR</Text>
+              </Pressable>
             ) : null}
             {pendingAttempt ? (
               <View style={styles.warningBox}>
-                <Text style={styles.warningText}>The last request may have committed even though the response was lost. Retry the same idempotency key to recover its result.</Text>
+                <Text style={styles.warningText}>The server has not confirmed this attendance attempt. Retry with the same idempotency key so the result can be recovered safely.</Text>
                 <Pressable style={styles.button} disabled={busy} onPress={() => void executeAttendanceAttempt(pendingAttempt)}>
-                  <Text style={styles.buttonText}>{busy ? "Retrying…" : "Retry previous attempt safely"}</Text>
+                  <Text style={styles.buttonText}>{busy ? "Retrying…" : "Retry attendance safely"}</Text>
                 </Pressable>
               </View>
             ) : null}
@@ -672,15 +771,22 @@ export default function CheckInScreen() {
                 {cameraMode === "enroll" ? "Face enrollment" : cameraMode === "liveness" ? "Active liveness" : "Scan current QR"}
               </Text>
               <Pressable
+                disabled={busy}
                 onPress={() => {
                   setCameraMode("none");
                   setCameraReady(false);
                   scannerLock.current = false;
                   captureLock.current = false;
+                  automaticLivenessCapture.current = false;
+                  setEnrollmentCountdown(null);
+                  setLivenessCountdown(null);
                   if (cameraMode === "liveness") {
                     void deleteTemporaryPhotos(frameUris);
                     setFrameUris([]);
                     setActiveChallenge(null);
+                    challengeStartedForTicket.current = "";
+                    automaticLivenessCapture.current = false;
+                    setLivenessCountdown(null);
                   }
                 }}
               >
@@ -698,19 +804,19 @@ export default function CheckInScreen() {
             />
             {cameraMode === "enroll" ? (
               <View style={styles.cameraActions}>
-                <Text style={styles.muted}>Face the camera straight on in good light. The photo is submitted to the provider for enrollment and removed from the temporary cache afterwards.</Text>
-                <Pressable style={styles.button} disabled={!cameraReady || busy} onPress={() => void captureEnrollment()}>
-                  <Text style={styles.buttonText}>{busy || biometricBusy ? "Working…" : "Capture and enroll face"}</Text>
-                </Pressable>
+                <Text style={styles.muted}>Keep your full face inside the live preview. The camera indicator remains visible while the image is captured and sent for enrollment.</Text>
+                <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · AUTOMATIC CAPTURE" : "STARTING CAMERA…"}</Text>
+                {enrollmentCountdown !== null ? <Text style={styles.countdownText}>Capturing enrollment in {enrollmentCountdown}… keep your face visible.</Text> : null}
+                {busy || biometricBusy ? <Text style={styles.muted}>Submitting the enrollment image securely…</Text> : null}
               </View>
             ) : cameraMode === "liveness" && activeChallenge && activeStep ? (
               <View style={styles.cameraActions}>
                 <Text style={styles.eyebrow}>STEP {frameUris.length + 1} OF 3</Text>
                 <Text style={styles.cardTitle}>{activeStep.instruction}</Text>
-                <Text style={styles.muted}>Follow the instruction and keep your face visible. The server checks frame order and provider liveness signals. A failed challenge must be restarted.</Text>
-                <Pressable style={styles.button} disabled={!cameraReady || busy} onPress={() => void captureLivenessFrame()}>
-                  <Text style={styles.buttonText}>{busy ? "Checking…" : "Capture frame " + (frameUris.length + 1)}</Text>
-                </Pressable>
+                <Text style={styles.muted}>Follow the instruction and keep your full face visible. The live preview stays on, and the camera captures each frame automatically.</Text>
+                <Text style={styles.cameraStatus}>CAMERA ACTIVE · LIVE MATCH + LIVENESS</Text>
+                {livenessCountdown !== null ? <Text style={styles.countdownText}>Capturing frame {frameUris.length + 1} in {livenessCountdown}…</Text> : null}
+                {busy ? <Text style={styles.muted}>Checking the captured frame…</Text> : null}
               </View>
             ) : cameraMode === "scan" ? (
               <View style={styles.cameraActions}>
@@ -721,13 +827,18 @@ export default function CheckInScreen() {
           </View>
         )}
       </ScrollView>
+      {notice ? <View style={styles.toastContainer} pointerEvents="box-none"><Notice message={notice} kind={noticeKind} /></View> : null}
     </View>
   );
 }
 
 function Notice({ message, kind }: { message: string; kind: "info" | "success" | "error" }) {
   return (
-    <View style={[styles.notice, kind === "success" ? styles.noticeSuccess : kind === "error" ? styles.noticeError : null]}>
+    <View
+      style={[styles.notice, kind === "success" ? styles.noticeSuccess : kind === "error" ? styles.noticeError : null]}
+      accessibilityRole={kind === "error" ? "alert" : undefined}
+      accessibilityLiveRegion={kind === "error" ? "assertive" : "polite"}
+    >
       <Text style={styles.noticeText}>{message}</Text>
     </View>
   );
@@ -746,50 +857,59 @@ function SetupRow({ title, detail, ready }: { title: string; detail: string; rea
 }
 
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#f3f5fa" },
+  screen: { flex: 1, backgroundColor: "#0b1220" },
+  toastContainer: { position: "absolute", top: Platform.OS === "ios" ? 58 : 26, left: 16, right: 16, zIndex: 1000, elevation: 10 },
   content: { padding: 18, paddingTop: 28, gap: 14, paddingBottom: 40 },
   loginContent: { flexGrow: 1, justifyContent: "center", padding: 22, gap: 14 },
-  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, backgroundColor: "#f3f5fa" },
+  center: { flex: 1, alignItems: "center", justifyContent: "center", gap: 12, backgroundColor: "#0b1220" },
   header: { flexDirection: "row", alignItems: "center", gap: 12, marginBottom: 2 },
-  brandMark: { width: 54, height: 54, borderRadius: 18, backgroundColor: "#3157d5", alignItems: "center", justifyContent: "center" },
-  brandMarkText: { color: "#ffffff", fontSize: 26, fontWeight: "800" },
-  eyebrow: { fontSize: 11, fontWeight: "800", color: "#5265a6", letterSpacing: 1.5, marginBottom: 6 },
-  title: { fontSize: 27, lineHeight: 33, fontWeight: "800", color: "#17223b" },
-  subtitle: { fontSize: 14, lineHeight: 21, color: "#65708a", marginTop: 5, marginBottom: 10 },
-  card: { backgroundColor: "#ffffff", borderRadius: 18, padding: 16, gap: 12, borderWidth: 1, borderColor: "#e1e6f0" },
-  cardTitle: { fontSize: 17, fontWeight: "800", color: "#1c2942", marginBottom: 2 },
+  brandMark: { width: 54, height: 54, borderRadius: 18, backgroundColor: "#63d7bf", alignItems: "center", justifyContent: "center" },
+  brandMarkText: { color: "#09211e", fontSize: 26, fontWeight: "800" },
+  eyebrow: { fontSize: 11, fontWeight: "800", color: "#70dfca", letterSpacing: 1.5, marginBottom: 6 },
+  title: { fontSize: 27, lineHeight: 33, fontWeight: "800", color: "#e8eef7" },
+  subtitle: { fontSize: 14, lineHeight: 21, color: "#9aa9be", marginTop: 5, marginBottom: 10 },
+  card: { backgroundColor: "#151f2e", borderRadius: 18, padding: 16, gap: 12, borderWidth: 1, borderColor: "rgba(154,173,198,0.16)" },
+  cardTitle: { fontSize: 17, fontWeight: "800", color: "#e8eef7", marginBottom: 2 },
   sectionHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 8 },
-  label: { color: "#34415e", fontSize: 13, fontWeight: "700", marginBottom: -5 },
-  input: { borderWidth: 1, borderColor: "#dce2ee", backgroundColor: "#f9faff", borderRadius: 12, minHeight: 48, paddingHorizontal: 13, color: "#17223b" },
-  button: { backgroundColor: "#3157d5", borderRadius: 12, minHeight: 47, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, paddingVertical: 12, marginTop: 3 },
+  label: { color: "#c6d2e2", fontSize: 13, fontWeight: "700", marginBottom: -5 },
+  input: { borderWidth: 1, borderColor: "#2e3d53", backgroundColor: "#0e1928", borderRadius: 12, minHeight: 48, paddingHorizontal: 13, color: "#e8eef7" },
+  button: { backgroundColor: "#63d7bf", borderRadius: 12, minHeight: 47, alignItems: "center", justifyContent: "center", paddingHorizontal: 14, paddingVertical: 12, marginTop: 3 },
   buttonDisabled: { opacity: 0.45 },
-  buttonText: { color: "#ffffff", fontWeight: "800", fontSize: 14, textAlign: "center" },
-  secondaryButton: { borderWidth: 1, borderColor: "#cbd5e8", backgroundColor: "#f7f9ff", borderRadius: 12, minHeight: 44, justifyContent: "center", alignItems: "center", paddingHorizontal: 12 },
-  secondaryButtonText: { color: "#2e456f", fontWeight: "700", fontSize: 13 },
-  outlineButton: { borderWidth: 1, borderColor: "#cbd5e8", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 11 },
-  outlineButtonText: { color: "#334466", fontWeight: "700" },
-  link: { color: "#3157d5", fontWeight: "800", fontSize: 13 },
-  selectedText: { color: "#2d7d58", fontWeight: "800", fontSize: 13 },
-  pill: { overflow: "hidden", borderRadius: 30, paddingHorizontal: 9, paddingVertical: 5, color: "#39558f", backgroundColor: "#eff3ff", fontSize: 11, fontWeight: "800" },
-  sessionRow: { flexDirection: "row", gap: 10, alignItems: "center", padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "#e2e7f1" },
-  sessionRowSelected: { borderColor: "#6480e5", backgroundColor: "#f3f6ff" },
-  sessionTitle: { color: "#1c2942", fontWeight: "800", fontSize: 14, marginBottom: 4 },
+  buttonText: { color: "#09211e", fontWeight: "800", fontSize: 14, textAlign: "center" },
+  secondaryButton: { borderWidth: 1, borderColor: "#33445a", backgroundColor: "#111e2e", borderRadius: 12, minHeight: 44, justifyContent: "center", alignItems: "center", paddingHorizontal: 12 },
+  secondaryButtonText: { color: "#cbd6e5", fontWeight: "700", fontSize: 13 },
+  outlineButton: { borderWidth: 1, borderColor: "#33445a", borderRadius: 10, paddingVertical: 9, paddingHorizontal: 11 },
+  outlineButtonText: { color: "#cbd6e5", fontWeight: "700" },
+  link: { color: "#70dfca", fontWeight: "800", fontSize: 13 },
+  selectedText: { color: "#85e8d7", fontWeight: "800", fontSize: 13 },
+  pill: { overflow: "hidden", borderRadius: 30, paddingHorizontal: 9, paddingVertical: 5, color: "#a9e9df", backgroundColor: "#173b41", fontSize: 11, fontWeight: "800" },
+  sessionRow: { flexDirection: "row", gap: 10, alignItems: "center", padding: 12, borderRadius: 12, borderWidth: 1, borderColor: "rgba(154,173,198,0.16)", backgroundColor: "#101b2a" },
+  sessionRowSelected: { borderColor: "#63d7bf", backgroundColor: "#17343a" },
+  sessionTitle: { color: "#e8eef7", fontWeight: "800", fontSize: 14, marginBottom: 4 },
   setupRow: { flexDirection: "row", alignItems: "center", gap: 11, paddingVertical: 5 },
-  setupTitle: { color: "#253250", fontSize: 13, fontWeight: "800", marginBottom: 3 },
+  setupTitle: { color: "#d9e4f2", fontSize: 13, fontWeight: "800", marginBottom: 3 },
+  faceConsentPanel: { gap: 10, borderRadius: 14, padding: 12, backgroundColor: "#0e1928", borderWidth: 1, borderColor: "rgba(154,173,198,0.18)" },
+  consentRow: { flexDirection: "row", alignItems: "flex-start", gap: 10 },
+  consentBox: { width: 21, height: 21, borderRadius: 6, borderWidth: 1.5, borderColor: "#7588a4", backgroundColor: "#111e2e", alignItems: "center", justifyContent: "center", marginTop: 2 },
+  consentBoxChecked: { borderColor: "#63d7bf", backgroundColor: "#173b41" },
+  consentCheckmark: { color: "#90eddd", fontWeight: "900", fontSize: 14 },
+  consentText: { flex: 1, color: "#bdcadb", fontSize: 12, lineHeight: 18 },
+  cameraStatus: { color: "#148879", fontSize: 10, letterSpacing: 1.4, fontWeight: "900" },
+  countdownText: { color: "#176d67", fontSize: 12, fontWeight: "800", lineHeight: 18 },
   dot: { width: 11, height: 11, borderRadius: 6, backgroundColor: "#cad1de" },
   dotReady: { backgroundColor: "#2ea36b" },
-  muted: { color: "#6f7a91", fontSize: 13, lineHeight: 19 },
-  mutedSmall: { color: "#7a859b", fontSize: 12, lineHeight: 17 },
-  footnote: { color: "#77839a", fontSize: 11, lineHeight: 16 },
-  footer: { color: "#7a859b", fontSize: 11, lineHeight: 17, textAlign: "center", marginTop: 4 },
-  notice: { borderRadius: 12, backgroundColor: "#e8efff", padding: 12, borderWidth: 1, borderColor: "#d5e1ff" },
-  noticeSuccess: { backgroundColor: "#e6f7ef", borderColor: "#c4ecd9" },
-  noticeError: { backgroundColor: "#fff0ee", borderColor: "#ffd8d2" },
-  noticeText: { color: "#33415f", fontSize: 12, lineHeight: 18, fontWeight: "600" },
-  successText: { color: "#28754e", fontSize: 13, fontWeight: "800", lineHeight: 18 },
-  warningBox: { borderRadius: 12, padding: 12, backgroundColor: "#fff7e8", borderWidth: 1, borderColor: "#f2dfb9", gap: 10 },
-  warningText: { color: "#79541a", fontSize: 12, lineHeight: 18 },
-  dangerButton: { backgroundColor: "#a93d35", borderRadius: 12, minHeight: 43, alignItems: "center", justifyContent: "center" },
+  muted: { color: "#9aa9be", fontSize: 13, lineHeight: 19 },
+  mutedSmall: { color: "#8798b0", fontSize: 12, lineHeight: 17 },
+  footnote: { color: "#8f9fb5", fontSize: 11, lineHeight: 16 },
+  footer: { color: "#8798b0", fontSize: 11, lineHeight: 17, textAlign: "center", marginTop: 4 },
+  notice: { borderRadius: 12, backgroundColor: "#1b2b40", padding: 12, borderWidth: 1, borderColor: "rgba(154,173,198,0.19)", gap: 9 },
+  noticeSuccess: { backgroundColor: "#15352f", borderColor: "rgba(99,215,191,0.25)" },
+  noticeError: { backgroundColor: "#3a2028", borderColor: "rgba(248,113,113,0.28)" },
+  noticeText: { color: "#d8e3f1", fontSize: 12, lineHeight: 18, fontWeight: "600" },
+  successText: { color: "#82e3cf", fontSize: 13, fontWeight: "800", lineHeight: 18 },
+  warningBox: { borderRadius: 12, padding: 12, backgroundColor: "#352c20", borderWidth: 1, borderColor: "rgba(224,182,94,0.25)", gap: 10 },
+  warningText: { color: "#f1d79d", fontSize: 12, lineHeight: 18 },
+  dangerButton: { backgroundColor: "#852f3c", borderRadius: 12, minHeight: 43, alignItems: "center", justifyContent: "center" },
   camera: { width: "100%", height: 330, borderRadius: 14, overflow: "hidden", backgroundColor: "#101521" },
   cameraActions: { gap: 10, marginTop: 2 },
 });

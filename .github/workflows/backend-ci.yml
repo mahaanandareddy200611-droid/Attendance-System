@@ -9,6 +9,9 @@ on:
       - "render.yaml"
       - "backend/render.yaml"
       - "DEPLOYMENT_READINESS.md"
+      - "docs/LOAD_TESTING.md"
+      - "load-tests/**"
+      - ".github/workflows/staging-load-test.yml"
   pull_request:
     paths:
       - "backend/**"
@@ -17,6 +20,9 @@ on:
       - "render.yaml"
       - "backend/render.yaml"
       - "DEPLOYMENT_READINESS.md"
+      - "docs/LOAD_TESTING.md"
+      - "load-tests/**"
+      - ".github/workflows/staging-load-test.yml"
   workflow_dispatch:
 
 permissions:
@@ -56,6 +62,9 @@ jobs:
       - name: Install backend dependencies
         working-directory: backend
         run: npm ci
+
+      - name: Validate k6 load test script syntax
+        run: node --input-type=module --check < load-tests/attendance-k6.js
       - name: Run unit and database/Redis integration tests
         working-directory: backend
         run: npm test

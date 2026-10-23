@@ -55,15 +55,16 @@ function createBiometricLimiters(scope, defaults) {
 
 const enrollmentLimits = createBiometricLimiters("ENROLL", {
     ipCapacity: 300, ipRefill: 10,
-    userCapacity: 3, userRefill: 1 / 3600
+    // Allow a few camera/provider retries without permitting rapid unlimited uploads.
+    userCapacity: 5, userRefill: 1 / 900
 });
 const challengeLimits = createBiometricLimiters("CHALLENGE", {
     ipCapacity: 600, ipRefill: 15,
-    userCapacity: 6, userRefill: 0.1
+    userCapacity: 12, userRefill: 0.2
 });
 const verifyLimits = createBiometricLimiters("VERIFY", {
     ipCapacity: 600, ipRefill: 15,
-    userCapacity: 6, userRefill: 0.1
+    userCapacity: 12, userRefill: 0.2
 });
 
 async function requireActiveEligibleSession(req, res, next) {

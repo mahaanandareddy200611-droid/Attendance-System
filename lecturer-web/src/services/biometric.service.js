@@ -44,6 +44,8 @@ export async function enrollBiometric(image) {
   const photo = await prepareBiometricImage(image);
   const form = new FormData();
   form.append("image", photo, photo.name || "enrollment.jpg");
+  form.append("consent", "true");
+  form.append("consentVersion", "face-attendance-v1");
   return api.post("/biometric/enroll", form);
 }
 
