@@ -35,8 +35,10 @@ const BiometricEnrollmentSchema =
             status: {
                 type: String,
                 enum: [
+                    "PENDING_APPROVAL",
                     "ACTIVE",
                     "DELETE_PENDING",
+                    "REJECTED",
                     "REVOKED"
                 ],
                 default: "ACTIVE",
@@ -46,6 +48,35 @@ const BiometricEnrollmentSchema =
             enrolledAt: {
                 type: Date,
                 default: Date.now
+            },
+
+            reviewDecision: {
+                type: String,
+                enum: ["PENDING", "APPROVED", "REJECTED", "WITHDRAWN"],
+                default: "PENDING",
+                index: true
+            },
+
+            reviewedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User",
+                default: null
+            },
+
+            reviewedAt: {
+                type: Date,
+                default: null
+            },
+
+            approvedBy: {
+                type: mongoose.Schema.Types.ObjectId,
+                ref: "User",
+                default: null
+            },
+
+            approvedAt: {
+                type: Date,
+                default: null
             },
 
             lastVerifiedAt: {

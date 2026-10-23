@@ -5,7 +5,7 @@ const crypto =
 const QR_REFRESH_MS =
     Number(
         process.env.QR_REFRESH_MS
-    ) || 3000;
+    ) || 1500;
 
 const configuredSkewSlots = process.env.QR_ALLOWED_SKEW_SLOTS;
 const parsedSkewSlots =

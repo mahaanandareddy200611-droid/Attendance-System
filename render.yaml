@@ -48,9 +48,11 @@ services:
       - key: MAIL_SECURE
         value: ""
       - key: QR_REFRESH_MS
-        value: "3000"
+        value: "1500"
       - key: QR_ALLOWED_SKEW_SLOTS
         value: "1"
+      - key: QR_CHALLENGE_TTL_MS
+        value: "5000"
       - key: ATTENDANCE_SESSION_MINUTES
         value: "60"
       - key: CORS_ORIGINS

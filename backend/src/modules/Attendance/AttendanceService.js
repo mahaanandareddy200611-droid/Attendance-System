@@ -40,6 +40,9 @@ const {
     verifyChallenge,
     createQrValidationTicket,
     getQrValidationTicket,
+    claimQrValidationTicket,
+    releaseQrValidationTicket,
+    finalizeQrValidationTicket,
     claimQrUse,
     completeQrUse,
     releaseQrUse
@@ -594,7 +597,7 @@ exports.getCurrentQr = async ({
         refreshMs:
             Number(
                 process.env.QR_REFRESH_MS
-            ) || 3000
+            ) || 1500
     };
 };
 
@@ -1229,6 +1232,30 @@ exports.verifyAttendance = async ({
 
     const { ownerToken } = idempotencyResult;
 
+    let qrValidationClaim = null;
+    if (qrValidationTicket) {
+        try {
+            qrValidationClaim = await claimQrValidationTicket({
+                validationId,
+                studentId,
+                idempotencyKey
+            });
+        } catch (error) {
+            await releaseIdempotency({ key: idempotencyKey, ownerToken }).catch(() => {});
+            throw error;
+        }
+    }
+
+    const releaseQrTicketClaim = async () => {
+        if (!qrValidationClaim?.claimed || !validationId) return;
+        try {
+            await releaseQrValidationTicket({ validationId, idempotencyKey });
+            qrValidationClaim = null;
+        } catch (error) {
+            console.error("Failed to release QR validation ticket claim", { errorName: error?.name || "Error" });
+        }
+    };
+
     const assertionReservation = {
         assertionId: biometricAssertionId,
         userId: studentId,
@@ -1238,30 +1265,22 @@ exports.verifyAttendance = async ({
 
     const releaseReservedAssertion = async () => {
         try {
-            await releaseAssertionReservation(
-                assertionReservation
-            );
+            await releaseAssertionReservation(assertionReservation);
         } catch (error) {
-            console.error(
-                "Failed to release biometric assertion reservation:",
-                error
-            );
+            console.error("Failed to release biometric assertion reservation:", error);
         }
     };
 
     try {
         await reserveAssertion(assertionReservation);
     } catch (error) {
+        await releaseQrTicketClaim();
         await releaseIdempotency({
             key: idempotencyKey,
             ownerToken
         }).catch((cleanupError) => {
-            console.error(
-                "Failed to release idempotency claim:",
-                cleanupError
-            );
+            console.error("Failed to release idempotency claim:", cleanupError);
         });
-
         throw error;
     }
 
@@ -1288,6 +1307,7 @@ exports.verifyAttendance = async ({
         });
     } catch (error) {
         await releaseReservedAssertion();
+        await releaseQrTicketClaim();
         await releaseIdempotency({ key: idempotencyKey, ownerToken });
         throw error;
     }
@@ -1318,6 +1338,7 @@ exports.verifyAttendance = async ({
         };
 
         await releaseReservedAssertion();
+        await releaseQrTicketClaim();
 
         await completeIdempotency({
             key:
@@ -1620,6 +1641,7 @@ exports.verifyAttendance = async ({
     } catch (error) {
 
         await releaseReservedAssertion();
+        await releaseQrTicketClaim();
 
         /*
         --------------------------------------------------
@@ -1669,6 +1691,18 @@ exports.verifyAttendance = async ({
      * The MongoDB transaction has committed at this point.
      * Do not undo committed attendance if Redis cleanup fails.
      */
+
+    // Consume a QR ticket only after the Mongo transaction commits.
+    // The successful idempotency response is durable if Redis finalization races.
+    if (qrValidationClaim && validationId) {
+        try {
+            const finalized = await finalizeQrValidationTicket({ validationId, idempotencyKey });
+            if (!finalized) console.error("Attendance committed but QR ticket finalization was not confirmed", { errorName: "TicketFinalizeUnconfirmed" });
+            qrValidationClaim = null;
+        } catch (error) {
+            console.error("Attendance committed but QR ticket finalization failed", { errorName: error?.name || "Error" });
+        }
+    }
 
     // Consume the biometric assertion after the successful commit.
     try {

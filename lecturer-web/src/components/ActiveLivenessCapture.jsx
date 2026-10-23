@@ -8,6 +8,13 @@ function stopStream(stream) {
   stream?.getTracks().forEach((track) => track.stop());
 }
 
+function explainCameraError(error) {
+  if (error?.name === "NotAllowedError" || error?.name === "PermissionDeniedError") return "Camera permission was denied. Allow camera access for this HTTPS site and retry.";
+  if (error?.name === "NotFoundError" || error?.name === "DevicesNotFoundError") return "No front camera was found. Connect or enable a camera and retry.";
+  if (error?.name === "NotReadableError" || error?.name === "TrackStartError") return "The camera is busy or unavailable. Close other camera apps/tabs and retry.";
+  return error?.response?.data?.error?.message || error?.message || "Could not start the camera-based liveness check.";
+}
+
 export default function ActiveLivenessCapture({
   sessionId,
   onVerified,
@@ -43,33 +50,35 @@ export default function ActiveLivenessCapture({
   };
 
   const start = async () => {
+    if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
+      setMessage("Camera liveness requires HTTPS (or localhost) and browser camera support.");
+      return;
+    }
     setBusy(true);
     setMessage("");
     reset();
     try {
+      // Ask for camera access before creating the short-lived challenge. A
+      // permission prompt can take time and should not consume challenge TTL.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: { facingMode: { ideal: "user" }, width: { ideal: 1280 }, height: { ideal: 720 } },
+      });
+      streamRef.current = stream;
       const issued = await createActiveBiometricChallenge(sessionId);
       if (!Array.isArray(issued.steps) || issued.steps.length !== 3) {
         throw new Error("The server returned an invalid liveness sequence.");
       }
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: false,
-        video: { facingMode: "user", width: { ideal: 1280 }, height: { ideal: 720 } },
-      });
-      streamRef.current = stream;
       setChallenge(issued);
       setFrames([]);
       setCurrentStep(0);
       setCameraActive(true);
-      setMessage("Follow each instruction and capture one clear frame per step.");
+      setMessage("Camera is live. Follow each server-issued instruction and capture one clear frame per step.");
     } catch (error) {
       stopStream(streamRef.current);
       streamRef.current = null;
       setCameraActive(false);
-      setMessage(
-        error?.response?.data?.error?.message ||
-          error.message ||
-          "Could not start the camera-based liveness check.",
-      );
+      setMessage(explainCameraError(error));
     } finally {
       setBusy(false);
     }

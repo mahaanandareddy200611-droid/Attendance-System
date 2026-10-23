@@ -392,6 +392,7 @@ exports.createQrValidationTicket = async ({
         token,
         slot,
         nonce,
+        state: "ISSUED",
         createdAt: Date.now()
     };
     const saved = await redisClient.set(
@@ -414,4 +415,88 @@ exports.getQrValidationTicket = async ({ validationId }) => {
     } catch {
         throw new AppError("QR validation ticket is invalid. Scan the QR again.", 500);
     }
+};
+
+
+/*
+ * Atomically reserve a validated QR ticket for exactly one idempotent
+ * attendance operation. PTTL is preserved so a retry cannot extend the
+ * authorization window. Safe across API instances sharing Redis.
+ */
+exports.claimQrValidationTicket = async ({ validationId, studentId, idempotencyKey }) => {
+    const key = qrValidationKey(validationId);
+    const script = `
+        local current = redis.call("GET", KEYS[1])
+        if not current then return -1 end
+        local ticket = cjson.decode(current)
+        if tostring(ticket.studentId) ~= ARGV[1] then return -2 end
+        if ticket.state == "CONSUMED" then
+            if ticket.consumedBy == ARGV[2] then return 2 end
+            return 0
+        end
+        if ticket.state == "CLAIMED" then
+            if ticket.claimKey == ARGV[2] then return 2 end
+            return 0
+        end
+        if ticket.state and ticket.state ~= "ISSUED" then return 0 end
+        local ttl = redis.call("PTTL", KEYS[1])
+        if ttl <= 0 then return -1 end
+        ticket.state = "CLAIMED"
+        ticket.claimKey = ARGV[2]
+        redis.call("SET", KEYS[1], cjson.encode(ticket), "PX", ttl)
+        return 1
+    `;
+    const result = Number(await redisClient.eval(script, {
+        keys: [key],
+        arguments: [String(studentId), String(idempotencyKey)]
+    }));
+    if (result === -1) throw new AppError("QR validation ticket expired. Scan the QR again.", 401);
+    if (result === -2) throw new AppError("QR validation ticket does not belong to this student.", 403);
+    if (result === 0) throw new AppError("QR validation ticket has already been used or is being processed. Scan the QR again.", 409);
+    return { key, idempotencyKey: String(idempotencyKey), claimed: true, sameOperation: result === 2 };
+};
+
+/* Restore an uncommitted claim only if this request still owns it. */
+exports.releaseQrValidationTicket = async ({ validationId, idempotencyKey }) => {
+    const key = qrValidationKey(validationId);
+    const script = `
+        local current = redis.call("GET", KEYS[1])
+        if not current then return 0 end
+        local ticket = cjson.decode(current)
+        if ticket.state ~= "CLAIMED" or ticket.claimKey ~= ARGV[1] then return 0 end
+        local ttl = redis.call("PTTL", KEYS[1])
+        if ttl <= 0 then redis.call("DEL", KEYS[1]); return 0 end
+        ticket.state = "ISSUED"
+        ticket.claimKey = nil
+        redis.call("SET", KEYS[1], cjson.encode(ticket), "PX", ttl)
+        return 1
+    `;
+    return Number(await redisClient.eval(script, {
+        keys: [key],
+        arguments: [String(idempotencyKey)]
+    })) === 1;
+};
+
+/* Called only after attendance's Mongo transaction has committed. */
+exports.finalizeQrValidationTicket = async ({ validationId, idempotencyKey }) => {
+    const key = qrValidationKey(validationId);
+    const script = `
+        local current = redis.call("GET", KEYS[1])
+        if not current then return 0 end
+        local ticket = cjson.decode(current)
+        if ticket.state == "CONSUMED" and ticket.consumedBy == ARGV[1] then return 2 end
+        if ticket.state ~= "CLAIMED" or ticket.claimKey ~= ARGV[1] then return 0 end
+        local ttl = redis.call("PTTL", KEYS[1])
+        if ttl <= 0 then redis.call("DEL", KEYS[1]); return 0 end
+        ticket.state = "CONSUMED"
+        ticket.consumedBy = ARGV[1]
+        ticket.claimKey = nil
+        redis.call("SET", KEYS[1], cjson.encode(ticket), "PX", ttl)
+        return 1
+    `;
+    const result = Number(await redisClient.eval(script, {
+        keys: [key],
+        arguments: [String(idempotencyKey)]
+    }));
+    return result === 1 || result === 2;
 };

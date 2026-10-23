@@ -812,8 +812,23 @@
   overflow: hidden;
   border-radius: 12px;
 }
-.student-qr-reader:empty {
-  display: none;
+.student-qr-reader:not(.is-active) { display: none; }
+.student-qr-reader.is-active {
+  display: block;
+  min-height: 260px;
+  padding: 8px;
+  border: 1px solid #dfe6f3;
+  border-radius: 12px;
+  background: #101521;
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.04);
+}
+.student-qr-reader.is-active > div,
+.student-qr-reader.is-active video { width: 100% !important; max-width: 100%; }
+.student-qr-reader.is-active video {
+  display: block;
+  min-height: 220px;
+  max-height: 58vh;
+  object-fit: cover;
 }
 .student-qr-reader video {
   border-radius: 12px;
@@ -1063,4 +1078,32 @@
   .academic-button {
     min-height: 44px;
   }
+}
+
+
+/* Biometric enrollment review and camera feedback */
+.academic-notice.info { border: 1px solid #d7e2ff; background: #f0f4ff; color: #2d478f; }
+.enrollment-pending-notice { display: flex; flex-wrap: wrap; align-items: center; gap: 10px 16px; }
+.enrollment-pending-notice span { flex: 1 1 280px; color: #4f5f7c; font-size: 13px; line-height: 1.5; }
+.enrollment-approval-list { display: grid; gap: 14px; }
+.enrollment-approval-item {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid #e4eaf3;
+  border-radius: 13px;
+  background: #fff;
+}
+.enrollment-approval-details { display: grid; gap: 6px; min-width: 0; }
+.enrollment-approval-details strong { color: #1e293d; font-size: 15px; }
+.enrollment-approval-details p,
+.enrollment-approval-details span { margin: 0; color: #59677b; font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.enrollment-approval-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
+.academic-button.danger { background: #b44747; }
+.academic-button.danger:hover { background: #963939; }
+@media (max-width: 680px) {
+  .enrollment-approval-item { grid-template-columns: minmax(0, 1fr); align-items: stretch; }
+  .enrollment-approval-actions { justify-content: flex-start; }
 }
