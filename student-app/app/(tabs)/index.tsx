@@ -360,6 +360,7 @@ export default function CheckInScreen() {
       setCameraMode("none");
       scannerLock.current = false;
       autoStartedTicketId.current = "";
+      challengeStartedForTicket.current = "";
       showNotice(response.message || "Attendance marked successfully.", "success");
       await reloadData();
     } catch (error) {
@@ -374,6 +375,7 @@ export default function CheckInScreen() {
         setCameraMode("none");
         scannerLock.current = false;
         autoStartedTicketId.current = "";
+        challengeStartedForTicket.current = "";
         showNotice(getMessage(error) + " The QR ticket may have expired. Scan the current QR and repeat face verification.", "error");
       }
     } finally {
@@ -398,6 +400,7 @@ export default function CheckInScreen() {
       setCameraReady(false);
       setCameraMode("none");
       autoStartedTicketId.current = "";
+      challengeStartedForTicket.current = "";
       showNotice("Live QR validated by the server. Face matching and liveness will now start automatically.", "success");
     } catch (error) {
       scannerLock.current = false;
@@ -423,6 +426,7 @@ export default function CheckInScreen() {
     setFrameUris([]);
     setPendingAttempt(null);
     autoStartedTicketId.current = "";
+    challengeStartedForTicket.current = "";
     setCameraReady(false);
     setCameraMode("scan");
     showNotice("Scan the lecturer's current QR. After the server validates it, face matching and liveness run automatically.", "info");
@@ -442,6 +446,7 @@ export default function CheckInScreen() {
     captureLock.current = false;
     automaticLivenessCapture.current = false;
     autoStartedTicketId.current = "";
+    challengeStartedForTicket.current = "";
     showNotice("Class selected. Scan its live QR first; the app then runs the visible face/liveness check.", "info");
   };
 
@@ -736,6 +741,7 @@ export default function CheckInScreen() {
                 style={styles.secondaryButton}
                 onPress={() => {
                   autoStartedTicketId.current = validationTicket.validationId;
+                  challengeStartedForTicket.current = "";
                   void startLiveness();
                 }}
               >
@@ -772,6 +778,9 @@ export default function CheckInScreen() {
                     void deleteTemporaryPhotos(frameUris);
                     setFrameUris([]);
                     setActiveChallenge(null);
+                    challengeStartedForTicket.current = "";
+                    automaticLivenessCapture.current = false;
+                    setLivenessCountdown(null);
                   }
                 }}
               >
