@@ -61,6 +61,7 @@ jobs:
           TARGET_DURATION: ${{ inputs.target_duration }}
           HIGH_LOAD_ACK: ${{ inputs.high_load_acknowledgement }}
           STAGING_BEARER_TOKENS: ${{ secrets.STAGING_BEARER_TOKENS }}
+          ALLOWED_STAGING_HOSTS: ${{ vars.STAGING_LOAD_TEST_ALLOWED_HOSTS }}
         run: |
           node <<'NODE'
           const fail = (message) => { console.error(message); process.exit(1); };
@@ -68,7 +69,17 @@ jobs:
           try { url = new URL(process.env.API_BASE_URL); }
           catch { fail("api_base_url must be a valid HTTPS URL ending in /api/v1."); }
           if (url.protocol !== "https:") fail("Load testing is HTTPS-only.");
-          if (!url.hostname.toLowerCase().includes("staging")) fail("Refusing load test: the hostname must explicitly contain 'staging'.");
+          const hostname = url.hostname.toLowerCase();
+          if (!hostname.includes("staging")) fail("Refusing load test: hostname must explicitly contain 'staging'.");
+          const defaultAllowedHosts = ["attendance-backend-staging-n04q.onrender.com"];
+          const allowedHosts = String(process.env.ALLOWED_STAGING_HOSTS || "")
+            .split(/[\\r\\n,]+/)
+            .map((value) => value.trim().toLowerCase())
+            .filter(Boolean);
+          const effectiveAllowedHosts = allowedHosts.length ? allowedHosts : defaultAllowedHosts;
+          if (!effectiveAllowedHosts.includes(hostname)) {
+            fail("Refusing load test: hostname is not in STAGING_LOAD_TEST_ALLOWED_HOSTS.");
+          }
           if (url.pathname.replace(/\/+$/, "") !== "/api/v1" || url.search || url.hash) {
             fail("api_base_url must end in exactly /api/v1 and have no query or fragment.");
           }
@@ -102,6 +113,7 @@ jobs:
           TARGET_RPS: ${{ inputs.target_rps }}
           TARGET_DURATION: ${{ inputs.target_duration }}
           STAGING_BEARER_TOKENS: ${{ secrets.STAGING_BEARER_TOKENS }}
+          ALLOWED_STAGING_HOSTS: ${{ vars.STAGING_LOAD_TEST_ALLOWED_HOSTS }}
         run: k6 run --summary-export=load-test-summary.json load-tests/attendance-k6.js
       - name: Publish sanitized load-test metrics
         if: always()
