@@ -145,12 +145,15 @@ test("login rejects invalid credentials, supports keyboard focus, routes by role
   assert.deepEqual(pageErrors, [], "Auth screens should not raise browser exceptions");
 });
 
-test("student signup validates confirmation and submits the supported registration API", async () => {
-  const page = await newPage();
+test("student signup requires face consent and continues into automatic enrollment", async () => {
+  const page = await newPage({ viewport: { width: 390, height: 844 } });
+  const student = { id: "student-created-1", email: "sam.student@example.test", name: "Sam Student", role: "Student" };
   const calls = await mockApi(page, async (call) => {
-    if (call.path === "/auth/signup" && call.method === "POST") {
-      return json({ message: "Student account created" }, 201);
-    }
+    if (call.path === "/auth/signup" && call.method === "POST") return json({ message: "Student account created" }, 201);
+    if (call.path === "/auth/login" && call.method === "POST") return json({ token: "new-student-token", data: student });
+    if (call.path === "/auth/me" && call.method === "GET") return json({ data: student });
+    if (call.path === "/biometric/me" && call.method === "GET") return json({ data: null });
+    if (call.path === "/biometric/enroll" && call.method === "POST") return json({ data: { status: "PENDING_APPROVAL", enrolledAt: new Date().toISOString() } }, 201);
     return json({ data: [] });
   });
   await page.goto(base + "/signup");
@@ -166,14 +169,20 @@ test("student signup validates confirmation and submits the supported registrati
   assert.equal(calls.some((call) => call.path === "/auth/signup"), false);
   await page.getByLabel("Confirm password").fill("SecureStudent123!");
   await page.getByRole("button", { name: "Sign Up" }).click();
-  await page.waitForURL(/\/login$/);
+  assert.match(await page.getByRole("alert").innerText(), /face-enrollment notice/i);
+  assert.equal(calls.some((call) => call.path === "/auth/signup"), false);
+  await page.getByLabel(/Required face-enrollment consent/i).check();
+  await page.getByRole("button", { name: "Sign Up" }).click();
+  await page.waitForURL(/\/student\/face-enrollment\?required=1&consent=face-attendance-v1$/);
+  await page.getByText(/submitted for lecturer approval/i).waitFor({ timeout: 15000 });
   assert.ok(calls.some((call) =>
     call.path === "/auth/signup" &&
     call.method === "POST" &&
     call.body.RollNumber === "24BCS101" &&
     call.body.faceImage_url === ""
   ));
-  await page.getByText("Your student account is ready. Sign in to continue.").waitFor();
+  assert.ok(calls.some((call) => call.path === "/auth/login" && call.method === "POST"));
+  assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
 });
 
 test("expired tokens are cleared and the role guard denies a lecturer route to an Admin", async () => {
@@ -564,48 +573,31 @@ test("student browser validates QR before face verification and does not require
   assert.equal(await page.getByText(/Device registration/i).count(), 0);
   assert.equal(calls.some((call) => call.path.startsWith("/devices/")), false);
 
-  await page.getByText("Enter QR token manually (camera fallback)", { exact: true }).click();
-  await page.getByLabel("QR token").fill("a-valid-server-issued-qr-token");
-  await page.getByRole("button", { name: "Validate QR", exact: true }).click();
-  await page.getByRole("button", { name: "Start face/liveness check" }).waitFor();
-  await page.getByText(/QR verified by the server/i).waitFor();
-
-  await page.getByRole("button", { name: "Start face/liveness check" }).click();
-  await page.getByText(/Active biometric challenge expired or invalid/i).waitFor();
-  assert.match(page.url(), /\/student\/dashboard$/);
-  assert.equal(await page.getByRole("heading", { name: /Scan QR, verify your face, check in/i }).count(), 1);
-  assert.ok(calls.some((call) => call.path === "/attendance/validate-qr" && call.method === "POST" && call.body.token === "a-valid-server-issued-qr-token"));
+  assert.equal(await page.getByText("Enter QR token manually (camera fallback)", { exact: true }).count(), 0);
+  assert.equal(await page.getByLabel("QR token").count(), 0);
+  assert.equal(await page.getByRole("button", { name: /Capture frame|Start face\/liveness check/i }).count(), 0);
+  assert.equal(calls.some((call) => call.path === "/attendance/validate-qr"), false, "QR must be scanned by camera; manual token entry is removed");
   assert.deepEqual(pageErrors, [], "Student attendance dashboard should not raise browser exceptions");
 });
 
-test("student face enrollment waits for lecturer approval instead of enabling check-in immediately", async () => {
+test("student must enroll before attendance and enrollment remains pending until approval", async () => {
   const page = await newPage({ viewport: { width: 390, height: 844 } });
   const calls = await mockApi(page, authHandler("Student", async (call) => {
     if (call.path === "/biometric/me" && call.method === "GET") return json({ data: null });
-    if (call.path === "/academic/sections" && call.method === "GET") return json({ data: [] });
-    if (call.path === "/attendance/records/me" && call.method === "GET") return json({ data: [] });
-    if (call.path === "/attendance/sessions/available" && call.method === "GET") return json({ data: [] });
-    if (call.path === "/attendance/validate-qr" && call.method === "POST") return json({ data: { validationId: "b5a7e0d8-c94e-4eeb-9d1e-7b63fe0e73f5", sessionId: "student-session-enroll", courseCode: "CS101", section: "A", expiresInMs: 180000 } });
     if (call.path === "/biometric/enroll" && call.method === "POST") return json({ data: { status: "PENDING_APPROVAL", enrolledAt: new Date().toISOString() } }, 201);
     return json({ data: [] });
   }));
   await page.goto(base + "/login");
   await login(page, "Student");
   await page.waitForURL(/\/student\/dashboard$/);
-  await page.getByText("Enter QR token manually (camera fallback)", { exact: true }).click();
-  await page.getByLabel("QR token").fill("a-valid-server-issued-qr-token");
-  await page.getByRole("button", { name: "Validate QR", exact: true }).click();
-  await page.getByRole("button", { name: "Open front camera" }).waitFor();
-  await page.getByRole("button", { name: "Open front camera" }).click();
+  await page.waitForURL(/\/student\/face-enrollment\?required=1$/);
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Start camera and enroll automatically" }).click();
   await page.locator(".student-enrollment-camera video").waitFor({ state: "visible", timeout: 10000 });
-  await page.waitForFunction(() => {
-    const video = document.querySelector(".student-enrollment-camera video");
-    return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
-  });
-  await page.getByRole("button", { name: "Capture and enroll face" }).click();
-  await page.getByText(/submitted for lecturer approval/i).waitFor();
-  assert.equal(await page.getByRole("button", { name: "Start face/liveness check" }).count(), 0);
+  await page.getByText(/submitted for lecturer approval/i).waitFor({ timeout: 15000 });
+  assert.equal(await page.getByRole("button", { name: /Retry face verification|Start face\/liveness check/i }).count(), 0);
   assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
+  assert.equal(calls.some((call) => call.path === "/attendance/validate-qr"), false);
 });
 
 test("lecturer can review pending biometric enrollment requests through the protected approval screen", async () => {
@@ -640,14 +632,11 @@ test("student can submit face enrollment independently before an attendance QR e
   await page.getByRole("link", { name: "Face enrollment", exact: true }).click();
   await page.waitForURL(/\/student\/face-enrollment$/);
   await page.getByRole("heading", { name: "Face enrollment" }).waitFor();
-  await page.getByRole("button", { name: "Open front camera" }).click();
+  await page.getByRole("checkbox").check();
+  await page.getByRole("button", { name: "Start camera and enroll automatically" }).click();
   await page.locator(".student-enrollment-camera video").waitFor({ state: "visible", timeout: 10000 });
-  await page.waitForFunction(() => {
-    const video = document.querySelector(".student-enrollment-camera video");
-    return Boolean(video && video.readyState >= 2 && video.videoWidth > 0);
-  });
-  await page.getByRole("button", { name: "Capture and submit enrollment" }).click();
-  await page.getByText(/submitted for lecturer approval/i).waitFor();
+  await page.getByText(/Preparing your enrollment frame|Camera active/i).waitFor({ timeout: 10000 });
+  await page.getByText(/submitted for lecturer approval/i).waitFor({ timeout: 15000 });
   assert.ok(calls.some((call) => call.path === "/biometric/enroll" && call.method === "POST"));
   assert.equal(calls.some((call) => call.path === "/attendance/validate-qr"), false, "enrollment must not require an attendance QR");
 });
