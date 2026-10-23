@@ -72,3 +72,46 @@ export async function submitAttendance({
     timeoutMs: 20000,
   });
 }
+
+export async function validateAttendanceQr(token: string, qrToken: string) {
+  const response = await apiRequest<any>("/attendance/validate-qr", {
+    method: "POST",
+    token,
+    body: { token: qrToken },
+    timeoutMs: 15000,
+  });
+  const ticket = response.data;
+  if (!ticket?.validationId || !ticket?.sessionId) {
+    throw new Error("The server did not return a valid QR-check ticket. Scan the current lecturer QR again.");
+  }
+  return ticket as {
+    validationId: string;
+    sessionId: string;
+    courseCode?: string;
+    section?: string;
+    expiresInMs?: number;
+  };
+}
+
+export async function submitValidatedAttendance({
+  token,
+  validationId,
+  biometricAssertionId,
+  idempotencyKey,
+}: {
+  token: string;
+  validationId: string;
+  biometricAssertionId: string;
+  idempotencyKey: string;
+}) {
+  if (!validationId || !biometricAssertionId) {
+    throw new Error("A server-validated QR and a passed face/liveness assertion are required.");
+  }
+  return apiRequest<any>("/attendance/verify", {
+    method: "POST",
+    token,
+    headers: { "Idempotency-Key": idempotencyKey },
+    body: { validationId, biometricAssertionId },
+    timeoutMs: 20000,
+  });
+}
