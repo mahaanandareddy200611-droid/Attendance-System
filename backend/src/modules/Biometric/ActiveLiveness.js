@@ -2,8 +2,6 @@
 
 const AppError = require('../../utils/AppError');
 
-// InsightFace's five-point order: left eye, right eye, nose, left mouth,
-// right mouth. Movement is normalized by inter-eye distance for scale stability.
 function normalizeLandmarks(raw) {
     let points = raw;
     if (points && !Array.isArray(points)) {
@@ -51,8 +49,6 @@ function measureYawOffset(rawLandmarks) {
     return (points[2].x - ((points[0].x + points[1].x) / 2)) / eyeDistance(points);
 }
 
-// Vertical prompt measures the face's nose position within the camera frame,
-// relative to inter-eye distance. It asks the user to move up/down in-frame.
 function measureVerticalPosition(rawLandmarks) {
     const points = normalizeLandmarks(rawLandmarks);
     return points[2].y / eyeDistance(points);
@@ -80,11 +76,14 @@ function assertActiveSequence(steps, frameLandmarks) {
     for (let i = 1; i < steps.length; i++) {
         const yawChange = yawOffsets[i] - yawOffsets[0];
         const verticalChange = verticalPositions[i] - verticalPositions[0];
+        // The test fixtures and unmirrored image coordinates define TURN_LEFT as
+        // a negative nose-x offset and TURN_RIGHT as a positive nose-x offset.
+        // Keep these signs consistent with the uploaded frame coordinates.
         if (steps[i] === 'TURN_LEFT' && yawChange > -turnMin) {
-            throw new AppError('Left movement was not detected. Follow the ← arrow and move your nose toward the left edge of the preview.', 401);
+            throw new AppError('Left movement was not detected. Follow the ← arrow, turn your head to your left, and hold briefly until the countdown finishes.', 401);
         }
         if (steps[i] === 'TURN_RIGHT' && yawChange < turnMin) {
-            throw new AppError('Right movement was not detected. Follow the → arrow and move your nose toward the right edge of the preview.', 401);
+            throw new AppError('Right movement was not detected. Follow the → arrow, turn your head to your right, and hold briefly until the countdown finishes.', 401);
         }
         if (steps[i] === 'MOVE_UP' && verticalChange > -verticalMin) {
             throw new AppError('Upward movement was not detected. Follow the ↑ arrow and move your face slightly upward inside the preview.', 401);
