@@ -58,22 +58,27 @@ export async function verifyBiometricForSession({ sessionId, image }) {
   const form = new FormData();
   form.append("sessionId", sessionId);
   form.append("challengeId", challengeId);
-  // The backend requires proof of the issued nonce; sending only the challengeId is insufficient.
   form.append("challenge", challengeResponse.data.data.challenge);
   form.append("image", photo, photo.name || "verification.jpg");
   const response = await api.post("/biometric/verify", form);
   return response.data.data.assertionId;
 }
 
-
 export async function createActiveBiometricChallenge(sessionId) {
   const response = await api.post("/biometric/challenge-active", { sessionId });
-  return response.data.data;
+  const challenge = response.data?.data;
+  if (!challenge?.challengeId || !challenge?.challenge || !Array.isArray(challenge.steps)) {
+    throw new Error("The server returned an invalid liveness challenge.");
+  }
+  if (challenge.steps.length !== 5) {
+    throw new Error(`The server returned ${challenge.steps.length} liveness steps; five ordered frames are required.`);
+  }
+  return challenge;
 }
 
 export async function verifyActiveBiometricSequence({ sessionId, challengeId, challenge, frames }) {
-  if (!Array.isArray(frames) || frames.length !== 3) {
-    throw new Error("Capture all three requested liveness frames first.");
+  if (!Array.isArray(frames) || frames.length !== 5) {
+    throw new Error("Capture all five requested liveness frames first.");
   }
   const form = new FormData();
   form.append("sessionId", sessionId);
@@ -83,7 +88,7 @@ export async function verifyActiveBiometricSequence({ sessionId, challengeId, ch
     form.append("frames", frame, frame.name || `liveness-frame-${index + 1}.jpg`);
   });
   const response = await api.post("/biometric/verify-active", form, {
-    timeout: 30000,
+    timeout: 45000,
   });
   return response.data.data.assertionId;
 }
