@@ -65,8 +65,8 @@ function assertActiveSequence(steps, frameLandmarks) {
     }
 
     const centerMax = Number(process.env.ACTIVE_LIVENESS_CENTER_MAX_OFFSET) || 0.25;
-    const turnMin = Number(process.env.ACTIVE_LIVENESS_TURN_MIN_OFFSET) || 0.12;
-    const verticalMin = Number(process.env.ACTIVE_LIVENESS_VERTICAL_MIN_OFFSET) || 0.12;
+    const turnMin = Number(process.env.ACTIVE_LIVENESS_TURN_MIN_OFFSET) || 0.10;
+    const verticalMin = Number(process.env.ACTIVE_LIVENESS_VERTICAL_MIN_OFFSET) || 0.10;
     const yawOffsets = frameLandmarks.map(measureYawOffset);
     const verticalPositions = frameLandmarks.map(measureVerticalPosition);
     if (Math.abs(yawOffsets[0]) > centerMax) {
@@ -80,10 +80,10 @@ function assertActiveSequence(steps, frameLandmarks) {
         // a negative nose-x offset and TURN_RIGHT as a positive nose-x offset.
         // Keep these signs consistent with the uploaded frame coordinates.
         if (steps[i] === 'TURN_LEFT' && yawChange > -turnMin) {
-            throw new AppError('Left movement was not detected. Follow the ← arrow, turn your head to your left, and hold briefly until the countdown finishes.', 401);
+            throw new AppError('Left movement was not detected. Follow the ← arrow and move your nose toward the LEFT edge of the camera preview; hold briefly until the countdown finishes.', 401);
         }
         if (steps[i] === 'TURN_RIGHT' && yawChange < turnMin) {
-            throw new AppError('Right movement was not detected. Follow the → arrow, turn your head to your right, and hold briefly until the countdown finishes.', 401);
+            throw new AppError('Right movement was not detected. Follow the → arrow and move your nose toward the RIGHT edge of the camera preview; hold briefly until the countdown finishes.', 401);
         }
         if (steps[i] === 'MOVE_UP' && verticalChange > -verticalMin) {
             throw new AppError('Upward movement was not detected. Follow the ↑ arrow and move your face slightly upward inside the preview.', 401);

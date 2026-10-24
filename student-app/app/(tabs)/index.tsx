@@ -110,6 +110,7 @@ export default function CheckInScreen() {
   const [faceConsentAccepted, setFaceConsentAccepted] = useState(false);
   const [enrollmentCountdown, setEnrollmentCountdown] = useState<number | null>(null);
   const [livenessCountdown, setLivenessCountdown] = useState<number | null>(null);
+  const [livenessError, setLivenessError] = useState("");
   const [validationTicket, setValidationTicket] = useState<ValidationTicket | null>(null);
   const [activeChallenge, setActiveChallenge] = useState<Awaited<ReturnType<typeof issueActiveLivenessChallenge>> | null>(null);
   const [frameUris, setFrameUris] = useState<string[]>([]);
@@ -189,7 +190,7 @@ export default function CheckInScreen() {
     setBusy(true);
     let imageUri = "";
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.58, exif: false, base64: false });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85, exif: false, base64: false });
       if (!photo?.uri) throw new Error("The camera did not return an image.");
       imageUri = photo.uri;
       setCameraMode("none");
@@ -287,6 +288,7 @@ export default function CheckInScreen() {
     }
     setFrameUris([]);
     setActiveChallenge(null);
+    setLivenessError("");
     captureLock.current = false;
     automaticLivenessCapture.current = false;
     setLivenessCountdown(null);
@@ -306,7 +308,7 @@ export default function CheckInScreen() {
     setBusy(true);
     let newUris: string[] = [];
     try {
-      const photo = await cameraRef.current.takePictureAsync({ quality: 0.58, exif: false, base64: false });
+      const photo = await cameraRef.current.takePictureAsync({ quality: 0.85, exif: false, base64: false });
       if (!photo?.uri) throw new Error("The camera did not return a frame.");
       newUris = [...frameUris, photo.uri];
       setFrameUris(newUris);
@@ -330,18 +332,23 @@ export default function CheckInScreen() {
       setAssertionId(nextAssertion);
       setActiveChallenge(null);
       setFrameUris([]);
+      setLivenessError("");
       showNotice("Face match and liveness passed. Attendance is being recorded automatically.", "success");
     } catch (error) {
       await deleteTemporaryPhotos([...newUris, ...frameUris]);
       setFrameUris([]);
       setActiveChallenge(null);
       setAssertionId("");
-      setCameraReady(false);
-      setCameraMode("none");
+      setLivenessError(getMessage(error));
+      // Keep the front-camera modal and the server-validated QR ticket. The
+      // next tap obtains a brand-new one-time challenge rather than reusing an
+      // expired/consumed nonce or making the student scan the QR again.
+      setCameraReady(true);
+      setCameraMode("liveness");
       autoStartedTicketId.current = validationTicket.validationId;
-      challengeStartedForTicket.current = "";
-      scannerLock.current = false;
-      showNotice(getMessage(error) + " You can retry face verification for this QR if it is still valid.", "error");
+      challengeStartedForTicket.current = validationTicket.validationId;
+      scannerLock.current = true;
+      showNotice(getMessage(error) + " Your QR validation is retained; start a fresh face check below.", "error");
     } finally {
       captureLock.current = false;
       setBusy(false);
@@ -401,6 +408,7 @@ export default function CheckInScreen() {
       setValidationTicket(ticket);
       setAssertionId("");
       setActiveChallenge(null);
+      setLivenessError("");
       setFrameUris([]);
       setPendingAttempt(null);
       setCameraReady(false);
@@ -432,6 +440,7 @@ export default function CheckInScreen() {
     setAssertionId("");
     setActiveChallenge(null);
     setFrameUris([]);
+    setLivenessError("");
     setPendingAttempt(null);
     autoStartedTicketId.current = "";
     challengeStartedForTicket.current = "";
@@ -446,6 +455,7 @@ export default function CheckInScreen() {
     setValidationTicket(null);
     setAssertionId("");
     setActiveChallenge(null);
+    setLivenessError("");
     setFrameUris([]);
     setPendingAttempt(null);
     setCameraMode("none");
@@ -457,6 +467,39 @@ export default function CheckInScreen() {
     challengeStartedForTicket.current = "";
     showNotice("Class selected. Scan its live QR first; the app then runs the visible face/liveness check.", "info");
   };
+
+  const retryLivenessChallenge = useCallback(async () => {
+    if (!token || !sessionId || !validationTicket || validationTicket.sessionId !== sessionId) {
+      setLivenessError("The validated QR ticket is no longer available. Scan the lecturer's current QR again.");
+      return;
+    }
+    if (busy || challengeRequestInFlight.current) return;
+
+    void deleteTemporaryPhotos(frameUris);
+    setFrameUris([]);
+    setActiveChallenge(null);
+    setAssertionId("");
+    setLivenessError("");
+    captureLock.current = false;
+    automaticLivenessCapture.current = false;
+    setLivenessCountdown(null);
+    challengeStartedForTicket.current = validationTicket.validationId;
+    challengeRequestInFlight.current = true;
+    setBusy(true);
+
+    try {
+      const freshChallenge = await issueActiveLivenessChallenge(token, sessionId);
+      setActiveChallenge(freshChallenge);
+      showNotice("A fresh secure challenge is ready. Follow each arrow and hold the position until capture.", "info");
+    } catch (error) {
+      setActiveChallenge(null);
+      setLivenessError(getMessage(error));
+      showNotice(getMessage(error) + " If the QR ticket has expired, scan the lecturer's current QR again.", "error");
+    } finally {
+      challengeRequestInFlight.current = false;
+      setBusy(false);
+    }
+  }, [token, sessionId, validationTicket, busy, frameUris, showNotice]);
 
   const closeCameraModal = useCallback(() => {
     if (busy) return;
@@ -474,6 +517,7 @@ export default function CheckInScreen() {
       void deleteTemporaryPhotos(frameUris);
       setFrameUris([]);
       setActiveChallenge(null);
+      setLivenessError("");
       challengeStartedForTicket.current = "";
       autoStartedTicketId.current = validationTicket?.validationId || "";
     } else if (closingMode === "scan") {
@@ -510,13 +554,12 @@ export default function CheckInScreen() {
         setActiveChallenge(null);
         setFrameUris([]);
         setAssertionId("");
-        setValidationTicket(null);
-        autoStartedTicketId.current = "";
-        challengeStartedForTicket.current = "";
-        scannerLock.current = false;
-        setCameraMode("none");
-        setCameraReady(false);
-        showNotice(getMessage(error) + " Scan the lecturer's current QR again.", "error");
+        setLivenessError(getMessage(error));
+        autoStartedTicketId.current = validationTicket.validationId;
+        challengeStartedForTicket.current = validationTicket.validationId;
+        scannerLock.current = true;
+        // Stay in the front-camera modal so the student can request a new challenge.
+        showNotice(getMessage(error) + " Your QR validation is retained; start a fresh face check below.", "error");
       })
       .finally(() => {
         challengeRequestInFlight.current = false;
@@ -553,7 +596,7 @@ export default function CheckInScreen() {
     ) return undefined;
 
     automaticLivenessCapture.current = true;
-    setLivenessCountdown(3);
+    setLivenessCountdown(4);
     let fired = false;
     const interval = setInterval(() => {
       setLivenessCountdown((remaining) => remaining !== null && Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
@@ -563,7 +606,7 @@ export default function CheckInScreen() {
       automaticLivenessCapture.current = false;
       setLivenessCountdown(null);
       void captureLivenessFrame();
-    }, 3100);
+    }, 4100);
 
     return () => {
       clearInterval(interval);
@@ -883,13 +926,24 @@ export default function CheckInScreen() {
                 {busy ? <Text style={styles.muted}>Analyzing the captured frame…</Text> : null}
               </>
             ) : cameraMode === "liveness" ? (
-              <View style={styles.livenessPromptRow}>
-                <ActivityIndicator size="large" color="#63d7bf" />
-                <View style={{ flex: 1, gap: 5 }}>
-                  <Text style={styles.cameraModalTitle}>{activeChallenge && frameUris.length >= activeChallenge.steps.length ? "Checking liveness and face match…" : "Preparing your secure challenge…"}</Text>
-                  <Text style={styles.muted}>Keep the face camera open. Your frames are processed for this check and temporary files are then deleted.</Text>
+              livenessError ? (
+                <View style={{ gap: 10 }}>
+                  <Text style={styles.cameraModalTitle}>Face check needs another attempt</Text>
+                  <Text style={styles.warningText}>{livenessError}</Text>
+                  <Text style={styles.muted}>Keep your face centered in good light. The same validated QR is retained while it remains valid.</Text>
+                  <Pressable style={[styles.button, busy ? styles.buttonDisabled : null]} disabled={busy} onPress={() => void retryLivenessChallenge()}>
+                    {busy ? <ActivityIndicator color="#07111f" /> : <Text style={styles.buttonText}>Start a fresh face check</Text>}
+                  </Pressable>
                 </View>
-              </View>
+              ) : (
+                <View style={styles.livenessPromptRow}>
+                  <ActivityIndicator size="large" color="#63d7bf" />
+                  <View style={{ flex: 1, gap: 5 }}>
+                    <Text style={styles.cameraModalTitle}>Preparing your secure challenge…</Text>
+                    <Text style={styles.muted}>Keep the face camera open. Your frames are processed for this check and temporary files are then deleted.</Text>
+                  </View>
+                </View>
+              )
             ) : (
               <>
                 <View style={styles.livenessPromptRow}>
