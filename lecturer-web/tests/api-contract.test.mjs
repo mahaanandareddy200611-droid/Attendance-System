@@ -133,3 +133,19 @@ test("face enrollment and approval requests allow Render startup and provider pr
   assert.match(studentBiometric, /timeoutMs: 120000/);
   assert.match(studentBiometric, /timeoutMs: 90000/);
 });
+
+
+test("active liveness opens a modal and renders a prominent direction arrow for every challenge step", () => {
+  const livenessCapture = frontend("src/components/ActiveLivenessCapture.jsx");
+  const academicCss = frontend("src/Styles/Academic.css");
+  assert.match(livenessCapture, /active-liveness-modal-backdrop/);
+  assert.match(livenessCapture, /role="dialog" aria-modal="true"/);
+  assert.match(livenessCapture, /active-liveness-direction-symbol/);
+  assert.match(livenessCapture, /livenessDirection\(step\?\.step\)/);
+  assert.match(livenessCapture, /TURN_LEFT.*←/s);
+  assert.match(livenessCapture, /TURN_RIGHT.*→/s);
+  assert.match(livenessCapture, /MOVE_UP.*↑/s);
+  assert.match(livenessCapture, /MOVE_DOWN.*↓/s);
+  assert.match(academicCss, /\.active-liveness-modal-backdrop\s*\{/);
+  assert.match(academicCss, /\.active-liveness-direction-symbol\s*\{/);
+});

@@ -23,7 +23,12 @@ async function request({ baseUrl, apiKey, path, method = "GET", body, fetchImpl,
       method, headers, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
       signal: AbortSignal.timeout(timeoutMs),
     });
-  } catch { throw new Error("Biometric provider request could not be completed"); }
+  } catch (error) {
+    const label = error?.name === "TimeoutError" || error?.name === "AbortError"
+      ? "timed out"
+      : "could not be reached";
+    throw new Error("Biometric provider " + method + " " + path + " " + label + " (" + String(error?.name || "Error") + "). Check provider origin, Render service health, and API-key configuration.");
+  }
   let data = null;
   try { data = await response.json(); } catch { data = null; }
   return { status: response.status, data };

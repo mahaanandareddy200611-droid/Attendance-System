@@ -31,6 +31,7 @@ export default function ActiveLivenessCapture({
   const [currentStep, setCurrentStep] = useState(0);
   const [cameraActive, setCameraActive] = useState(false);
   const [cameraReady, setCameraReady] = useState(false);
+  const [modalOpen, setModalOpen] = useState(false);
   const [captureCountdown, setCaptureCountdown] = useState(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
@@ -73,6 +74,7 @@ export default function ActiveLivenessCapture({
   }, []);
 
   const start = async () => {
+    setModalOpen(true);
     if (!window.isSecureContext || !navigator.mediaDevices?.getUserMedia) {
       setMessage("Camera liveness requires HTTPS (or localhost) and browser camera support.");
       return;
@@ -81,6 +83,7 @@ export default function ActiveLivenessCapture({
     setBusy(true);
     setMessage("");
     reset();
+    setModalOpen(true);
     try {
       // Ask for camera access before creating the short-lived challenge. A
       // permission prompt can take time and should not consume challenge TTL.
@@ -205,6 +208,7 @@ export default function ActiveLivenessCapture({
       setChallenge(null);
       setFrames([]);
       setCurrentStep(0);
+      setModalOpen(false);
       onVerified(assertionId);
       setMessage("Face match and active liveness checks passed for this attempt.");
     } catch (error) {
@@ -253,55 +257,91 @@ export default function ActiveLivenessCapture({
   }, [cameraActive, cameraReady, challenge?.challengeId, currentStep, disabled, busy]);
 
   const step = challenge?.steps?.[currentStep];
+  const prompt = livenessDirection(step?.step);
+  const errorMessage = /denied|failed|error|expired|invalid|blocked|could not|retry|unavailable|not detected|does not match/i.test(message);
+
+  const closeModal = () => {
+    if (busy) return;
+    reset();
+    setModalOpen(false);
+    setMessage("");
+    autoStartedRef.current = false;
+  };
 
   return (
     <section className="student-setup-item active-liveness-capture">
       <div className="student-setup-copy">
         <strong>Active face and liveness check</strong>
-        <span>After a valid QR, the camera check starts automatically. You will see each prompt and a live-camera indicator; no shutter button is needed.</span>
+        <span>After a valid QR, the camera opens in a focused verification window. Follow the large arrow and instruction; all five frames are captured automatically.</span>
       </div>
-      {cameraActive && (
-        <>
-          <video
-            ref={videoRef}
-            className="active-liveness-video"
-            autoPlay
-            playsInline
-            muted
-            aria-label="Live camera preview for face verification"
-          />
-          {step && (
-            <div className="academic-notice" role="status">
-              Step {currentStep + 1} of {challenge.steps.length}: {step.instruction}
-            </div>
-          )}
-          <p className="camera-live-indicator">Camera active · frame capture and face/liveness matching are in progress</p>
-          {captureCountdown !== null && <p className="academic-footnote" role="status">Next frame in {captureCountdown}… Follow the prompt and keep your face visible.</p>}
-          <p className="academic-footnote">Five brief live frames are sent to the configured biometric provider for matching and active-liveness checks. The camera stops when the check finishes or you stop it.</p>
-        </>
-      )}
-      {message && (
-        <div
-          className={"academic-notice academic-toast " + (/denied|failed|error|expired|invalid|blocked|could not|retry|unavailable/i.test(message) ? "error" : /passed|success|verified/i.test(message) ? "success" : "info")}
-          role="status"
-          aria-live="polite"
-        >
-          {message}
-        </div>
-      )}
-      {!cameraActive ? (
+      {!modalOpen && (
         <div className="active-liveness-actions">
-          <p className="academic-footnote" role="status">{busy ? "Starting the camera and preparing the secure check…" : "The check will start automatically after QR validation."}</p>
-          {!busy && <button type="button" className="academic-button" onClick={() => { autoStartedRef.current = false; void start(); }} disabled={disabled || !sessionId}>Retry face verification</button>}
-        </div>
-      ) : (
-        <div className="active-liveness-actions">
-          <span className="academic-footnote" role="status">{busy ? "Checking the current frame…" : "Capturing automatically after each prompt."}</span>
-          <button type="button" className="academic-button secondary" onClick={reset} disabled={busy || disabled}>
-            Stop verification
+          {message && <div className={"academic-notice academic-toast " + (errorMessage ? "error" : "info")} role="status" aria-live="polite">{message}</div>}
+          <button type="button" className="academic-button" onClick={() => { autoStartedRef.current = true; void start(); }} disabled={disabled || busy || !sessionId}>
+            {message ? "Retry face verification" : "Open face verification"}
           </button>
+        </div>
+      )}
+      {modalOpen && (
+        <div className="active-liveness-modal-backdrop">
+          <section className="active-liveness-modal" role="dialog" aria-modal="true" aria-label="Active face and liveness verification">
+            <header className="active-liveness-modal-header">
+              <div>
+                <p className="active-liveness-modal-eyebrow">SECURE ATTENDANCE CHECK</p>
+                <h2>Verify your face</h2>
+                <p className="active-liveness-modal-subtitle">Keep your full face visible. Follow the arrow; each frame is captured automatically.</p>
+              </div>
+              <button type="button" className="academic-button secondary" onClick={closeModal} disabled={busy}>Close</button>
+            </header>
+            {cameraActive ? (
+              <video ref={videoRef} className="active-liveness-video" autoPlay playsInline muted aria-label="Live camera preview for face verification" />
+            ) : (
+              <div className="active-liveness-camera-placeholder" role="status">
+                <span className="active-liveness-camera-placeholder-icon">{busy ? "◌" : "◎"}</span>
+                <span>{busy ? "Opening camera and preparing the secure check…" : "Camera is stopped. Retry to continue."}</span>
+              </div>
+            )}
+            {step && cameraActive ? (
+              <div className="active-liveness-direction-card" aria-live="polite">
+                <div className="active-liveness-direction-symbol" aria-label={prompt.label}>{prompt.symbol}</div>
+                <div className="active-liveness-direction-copy">
+                  <p className="active-liveness-modal-eyebrow">STEP {currentStep + 1} OF {challenge.steps.length} · {prompt.label}</p>
+                  <h3>{step.instruction}</h3>
+                  <p>Hold the position until the countdown completes. Keep both eyes and your full face visible.</p>
+                </div>
+              </div>
+            ) : (
+              <div className="academic-notice info" role="status">
+                {busy ? "Connecting to the camera and issuing your liveness challenge…" : "The camera is ready to retry. Your next attempt will request a fresh challenge."}
+              </div>
+            )}
+            {cameraActive && <p className="camera-live-indicator">CAMERA ACTIVE · FACE MATCHING AND LIVENESS IN PROGRESS</p>}
+            {captureCountdown !== null && <p className="academic-notice info" role="status">Next frame in {captureCountdown}… follow the arrow.</p>}
+            {message && (
+              <div className={"academic-notice " + (errorMessage ? "error" : /passed|success|verified/i.test(message) ? "success" : "info")} role="status" aria-live="polite">{message}</div>
+            )}
+            <div className="active-liveness-actions">
+              {cameraActive ? (
+                <button type="button" className="academic-button secondary" onClick={closeModal} disabled={busy}>Stop verification</button>
+              ) : (
+                <button type="button" className="academic-button" onClick={() => void start()} disabled={disabled || busy || !sessionId}>Retry face verification</button>
+              )}
+              <span className="academic-footnote">Five live frames are checked against your enrolled identity. Temporary captures are removed after processing.</span>
+            </div>
+          </section>
         </div>
       )}
     </section>
   );
+}
+
+
+function livenessDirection(step) {
+  switch (step) {
+    case "TURN_LEFT": return { symbol: "←", label: "TURN LEFT" };
+    case "TURN_RIGHT": return { symbol: "→", label: "TURN RIGHT" };
+    case "MOVE_UP": return { symbol: "↑", label: "MOVE UP" };
+    case "MOVE_DOWN": return { symbol: "↓", label: "MOVE DOWN" };
+    default: return { symbol: "◎", label: "FACE FORWARD" };
+  }
 }
