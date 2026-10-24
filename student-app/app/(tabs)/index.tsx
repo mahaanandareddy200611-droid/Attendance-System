@@ -963,7 +963,7 @@ export default function CheckInScreen() {
                   <Text style={styles.directionSymbol}>◉</Text>
                   <View style={{ flex: 1, gap: 5 }}>
                     <Text style={styles.cameraModalTitle}>Keep your full face in the oval</Text>
-                    <Text style={styles.muted}>Look straight ahead in good light. The app captures automatically; no capture button is needed.</Text>
+                    <Text style={styles.muted}>Look straight ahead in even front light. Start about 30–45 cm from the phone (adjust until sharp); do not put your nose near the lens. Keep forehead, chin and both cheeks in the oval. Capture is automatic.</Text>
                   </View>
                 </View>
                 <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · AUTOMATIC ENROLLMENT" : "STARTING CAMERA…"}</Text>
@@ -979,7 +979,7 @@ export default function CheckInScreen() {
                     <Text style={styles.cameraModalTitle}>{activeStep.instruction}</Text>
                   </View>
                 </View>
-                <Text style={styles.muted}>Move as shown, keep both eyes and your full face visible, then hold the position until the countdown finishes.</Text>
+                <Text style={styles.muted}>Move as shown, then hold until the countdown finishes. Stay about 30–45 cm from the phone or far enough for sharp focus; keep forehead, chin and both cheeks inside the oval.</Text>
                 <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · MOVEMENT CHECK" : "STARTING CAMERA…"}</Text>
                 {livenessCountdown !== null ? <Text style={styles.countdownText}>Capturing in {livenessCountdown}… hold the movement.</Text> : null}
                 {busy ? <Text style={styles.muted}>Analyzing the captured frame…</Text> : null}
@@ -989,7 +989,7 @@ export default function CheckInScreen() {
                 <View style={{ gap: 10 }}>
                   <Text style={styles.cameraModalTitle}>Face check needs another attempt</Text>
                   <Text style={styles.warningText}>{livenessError}</Text>
-                  <Text style={styles.muted}>Keep your face centered in good light. The same validated QR is retained while it remains valid.</Text>
+                  <Text style={styles.muted}>Keep your face sharp and centered, with even front lighting; do not bring the phone right up to your nose. A missing enrolled template cannot be fixed by moving closer. The validated QR is retained while valid.</Text>
                   <Pressable style={[styles.button, busy ? styles.buttonDisabled : null]} disabled={busy} onPress={() => void retryLivenessChallenge()}>
                     {busy ? <ActivityIndicator color="#07111f" /> : <Text style={styles.buttonText}>Start a fresh face check</Text>}
                   </Pressable>
