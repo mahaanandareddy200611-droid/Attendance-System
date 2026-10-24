@@ -85,7 +85,7 @@ test("active-frame detection performs same-frame enrolled identity verification 
       imageBuffer: Buffer.from("same live frame but different identity result"),
       mimeType: "image/jpeg",
     }),
-    (error) => error.statusCode === 401 && /identity does not match/.test(error.message),
+    (error) => error.statusCode === 401 && /(identity does not match|not found among the candidates)/i.test(error.message),
   );
 });
 

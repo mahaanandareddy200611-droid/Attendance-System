@@ -67,7 +67,7 @@ services:
         sync: false
 
       - key: BIOMETRIC_CHALLENGE_TTL_MS
-        value: "30000"
+        value: "120000"
       - key: BIOMETRIC_PRODUCTION_APPROVED
         value: "false"
       - key: BIOMETRIC_BASE_URL
@@ -82,6 +82,16 @@ services:
         value: "30000"
       - key: BIOMETRIC_MATCH_THRESHOLD
         value: "0.40"
+      - key: BIOMETRIC_CANDIDATE_THRESHOLD
+        value: "0.01"
+      - key: BIOMETRIC_ACTIVE_FRAME_MATCH_THRESHOLD
+        value: "0.30"
+      - key: ACTIVE_LIVENESS_CENTER_MAX_OFFSET
+        value: "0.25"
+      - key: ACTIVE_LIVENESS_TURN_MIN_OFFSET
+        value: "0.10"
+      - key: ACTIVE_LIVENESS_VERTICAL_MIN_OFFSET
+        value: "0.10"
       - key: BIOMETRIC_LIVENESS_THRESHOLD
         sync: false
       - key: BIOMETRIC_ASSERTION_TTL_MS

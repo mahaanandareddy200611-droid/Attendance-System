@@ -357,7 +357,8 @@ exports.verify =
     async ({
         userId,
         imageBuffer,
-        mimeType
+        mimeType,
+        minimumThreshold: requestedMinimumThreshold
     }) => {
 
         if (
@@ -393,22 +394,30 @@ exports.verify =
         );
 
 
-        form.append(
-            "limit",
-            "5"
-        );
+        // Ask for a broad candidate set; this floor is NOT the authentication
+        // threshold. The exact logged-in student's similarity is checked below.
+        form.append("limit", "25");
 
+        const configuredMinimumThreshold =
+            Number(process.env.BIOMETRIC_MATCH_THRESHOLD || "0.40");
+        const minimumThreshold = requestedMinimumThreshold === undefined
+            ? configuredMinimumThreshold
+            : Number(requestedMinimumThreshold);
 
-        const threshold =
-            process.env
-                .BIOMETRIC_MATCH_THRESHOLD ||
-            "0.40";
+        if (!Number.isFinite(minimumThreshold) || minimumThreshold <= 0 || minimumThreshold > 1) {
+            throw new AppError("Biometric match threshold is invalid", 500);
+        }
 
+        const configuredCandidateThreshold =
+            Number(process.env.BIOMETRIC_CANDIDATE_THRESHOLD || "0.01");
+        const candidateThreshold =
+            Number.isFinite(configuredCandidateThreshold) &&
+            configuredCandidateThreshold > 0 &&
+            configuredCandidateThreshold <= minimumThreshold
+                ? configuredCandidateThreshold
+                : Math.min(0.01, minimumThreshold);
 
-        form.append(
-            "threshold",
-            threshold
-        );
+        form.append("threshold", String(candidateThreshold));
 
 
         const result =
@@ -459,71 +468,45 @@ exports.verify =
 
 
         const matches =
-            result?.matches || [];
+            Array.isArray(result?.matches) ? result.matches : [];
 
-
-        if (
-            matches.length === 0
-        ) {
-
+        if (matches.length === 0) {
             throw new AppError(
-                "Face does not match an enrolled student",
+                "No face candidates were found. Move closer, face the light, keep your face centered, and retry.",
                 401
             );
         }
 
+        // Identification APIs return a ranked list. Its first item can be a
+        // different student, so authorize only by the score attached to this
+        // authenticated student's enrolled identity.
+        const expectedMatches = matches.filter(
+            (match) => String(match?.person?.external_id || "") === String(userId)
+        );
 
-        const bestMatch =
-            matches[0];
-
-
-        const matchedUserId =
-            bestMatch
-                ?.person
-                ?.external_id;
-
-
-        if (
-            String(
-                matchedUserId
-            ) !==
-            String(userId)
-        ) {
-
+        if (expectedMatches.length === 0) {
             throw new AppError(
-                "Face identity does not match the logged-in student",
+                "The enrolled face for this logged-in student was not found among the candidates. Use a clear, front-facing capture; if this persists, re-enroll and request lecturer approval.",
                 401
             );
         }
 
+        const expectedMatch = expectedMatches.reduce((best, current) => (
+            Number(current?.similarity) > Number(best?.similarity) ? current : best
+        ), expectedMatches[0]);
 
-        const similarity =
-            Number(
-                bestMatch.similarity
-            );
-
-
-        const minimumThreshold =
-            Number(
-                process.env
-                    .BIOMETRIC_MATCH_THRESHOLD
-            ) || 0.40;
-
+        const matchedUserId = String(expectedMatch?.person?.external_id || "");
+        const similarity = Number(expectedMatch?.similarity);
 
         if (
-            !Number.isFinite(
-                similarity
-            ) ||
-            similarity <
-                minimumThreshold
+            !Number.isFinite(similarity) ||
+            similarity < minimumThreshold
         ) {
-
             throw new AppError(
-                "Face similarity is below the configured threshold",
+                "Your enrolled face was detected, but the match confidence was below the required threshold. Center your face, improve lighting, and retry; if this repeats, re-enroll the face.",
                 401
             );
         }
-
 
         return {
             verified:
@@ -553,7 +536,7 @@ exports.verify =
  * Detect exactly one live face and return five-point landmarks for a single
  * frame. Requires the InsightFace Server liveness addon to be enabled.
  */
-exports.detect = async ({ userId, imageBuffer, mimeType }) => {
+exports.detect = async ({ userId, imageBuffer, mimeType, identityThreshold }) => {
     if (!Buffer.isBuffer(imageBuffer)) throw new AppError('Biometric frame is required', 400);
     if (!userId || typeof userId !== 'string') throw new AppError('Authenticated student identity is required for liveness', 400);
 
@@ -602,7 +585,12 @@ exports.detect = async ({ userId, imageBuffer, mimeType }) => {
     let identityVerificationId = String(result.identity_request_id || result.request_id || '');
 
     if (!identityFieldsPresent) {
-        const identityResult = await exports.verify({ userId, imageBuffer, mimeType });
+        const identityResult = await exports.verify({
+            userId,
+            imageBuffer,
+            mimeType,
+            minimumThreshold: identityThreshold
+        });
         identityVerified = identityResult?.verified === true;
         matchedPersonId = String(identityResult?.providerUserId || '');
         identitySimilarity = Number(identityResult?.similarity);

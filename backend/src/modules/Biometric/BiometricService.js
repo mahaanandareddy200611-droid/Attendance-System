@@ -67,7 +67,7 @@ const CHALLENGE_TTL_MS =
     Number(
         process.env
             .BIOMETRIC_CHALLENGE_TTL_MS
-    ) || 30000;
+    ) || 120000;
 
 const ASSERTION_TTL_MS =
     Number(
@@ -913,10 +913,15 @@ exports.verifyActiveSequence = async ({ userId, sessionId, challengeId, challeng
     const detections = [];
     for (let index = 0; index < frames.length; index += 1) {
         const frame = frames[index];
+        const minimumFrameSimilarity = index === 0
+            ? (Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 0.40)
+            : (Number(process.env.BIOMETRIC_ACTIVE_FRAME_MATCH_THRESHOLD) || 0.30);
+
         const detection = await provider.detect({
             userId: String(userId),
             imageBuffer: frame.imageBuffer,
-            mimeType: frame.mimeType || 'image/jpeg'
+            mimeType: frame.mimeType || 'image/jpeg',
+            identityThreshold: minimumFrameSimilarity
         });
 
         // Face detection, passive PAD, and identity matching must all succeed
@@ -932,6 +937,16 @@ exports.verifyActiveSequence = async ({ userId, sessionId, challengeId, challeng
                 401
             );
         }
+        const frameSimilarity = Number(detection?.identitySimilarity);
+        if (!Number.isFinite(frameSimilarity) || frameSimilarity < minimumFrameSimilarity) {
+            throw new AppError(
+                index === 0
+                    ? 'The centered face did not meet the required match confidence. Face the camera directly and improve lighting.'
+                    : 'Face confidence dropped during the movement. Move more slowly, keep your face large in the oval, and retry the fresh challenge.',
+                401
+            );
+        }
+
         detections.push(detection);
     }
 

@@ -97,6 +97,20 @@ test("accepts a live face matching the logged-in student", async (t) => {
     assert.equal(result.verificationId, "test-request-123");
 });
 
+test("matches the logged-in student's face even when another identity ranks first", async (t) => {
+    mockFetch(t, createProviderResponse({
+      matches: [
+        { person: { id: "other-person", external_id: "another-student" }, similarity: 0.98 },
+        { person: { id: "student-person", external_id: STUDENT_ID }, similarity: 0.72 },
+      ],
+    }));
+
+    const result = await verifyStudent();
+    assert.equal(result.verified, true);
+    assert.equal(result.providerUserId, STUDENT_ID);
+    assert.equal(result.similarity, 0.72);
+  });
+
 test("fails closed when liveness information is missing", async (t) => {
     mockFetch(t, {
         request_id: "test-request-124",
