@@ -281,6 +281,65 @@ export default function CheckInScreen() {
     );
   };
 
+  const repairFaceProfile = () => {
+    if (!token || busy || biometricBusy) return;
+    Alert.alert(
+      "Repair face enrollment?",
+      "This removes the current biometric profile and asks you to enroll again. You will need fresh consent and lecturer approval before attendance is enabled. Use this if repeated checks say no face-match candidates were found.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove and re-enroll",
+          style: "destructive",
+          onPress: async () => {
+            if (!token || busy || biometricBusy) return;
+            setBiometricBusy(true);
+            void deleteTemporaryPhotos(frameUris);
+            setCameraMode("none");
+            setCameraReady(false);
+            setEnrollmentCountdown(null);
+            setLivenessCountdown(null);
+            setFrameUris([]);
+            setActiveChallenge(null);
+            setValidationTicket(null);
+            setAssertionId("");
+            setPendingAttempt(null);
+            setLivenessError("");
+            scannerLock.current = false;
+            captureLock.current = false;
+            automaticLivenessCapture.current = false;
+            autoStartedTicketId.current = "";
+            challengeStartedForTicket.current = "";
+
+            try {
+              const response = await deleteFaceEnrollment(token);
+              const nextStatus = response.data?.status || "REVOKED";
+              setBiometricStatus(nextStatus);
+              if (nextStatus === "DELETE_PENDING") {
+                setFaceConsentAccepted(false);
+                showNotice("Profile deletion is pending. Attendance remains disabled until the provider confirms deletion; retry from the setup checklist later.", "error");
+              } else {
+                setFaceConsentAccepted(false);
+                showNotice("Old face profile removed. Accept the face-processing notice, enroll again in good front lighting, and wait for lecturer approval before check-in.", "success");
+              }
+            } catch (error) {
+              setBiometricStatus("DELETE_PENDING");
+              setFaceConsentAccepted(false);
+              showNotice(
+                errorStatus(error) === 503
+                  ? "Provider deletion is pending. Attendance stays disabled while the backend retries deletion."
+                  : getMessage(error),
+                "error",
+              );
+            } finally {
+              setBiometricBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const startLiveness = useCallback(async () => {
     if (!token || !sessionId || !validationTicket) {
       showNotice("Scan and validate the selected class QR before face/liveness verification.", "error");
@@ -904,7 +963,7 @@ export default function CheckInScreen() {
                   <Text style={styles.directionSymbol}>◉</Text>
                   <View style={{ flex: 1, gap: 5 }}>
                     <Text style={styles.cameraModalTitle}>Keep your full face in the oval</Text>
-                    <Text style={styles.muted}>Look straight ahead in good light. The app captures automatically; no capture button is needed.</Text>
+                    <Text style={styles.muted}>Look straight ahead in even front light. Start about 30–45 cm from the phone (adjust until sharp); do not put your nose near the lens. Keep forehead, chin and both cheeks in the oval. Capture is automatic.</Text>
                   </View>
                 </View>
                 <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · AUTOMATIC ENROLLMENT" : "STARTING CAMERA…"}</Text>
@@ -920,7 +979,7 @@ export default function CheckInScreen() {
                     <Text style={styles.cameraModalTitle}>{activeStep.instruction}</Text>
                   </View>
                 </View>
-                <Text style={styles.muted}>Move as shown, keep both eyes and your full face visible, then hold the position until the countdown finishes.</Text>
+                <Text style={styles.muted}>Move as shown, then hold until the countdown finishes. Stay about 30–45 cm from the phone or far enough for sharp focus; keep forehead, chin and both cheeks inside the oval.</Text>
                 <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · MOVEMENT CHECK" : "STARTING CAMERA…"}</Text>
                 {livenessCountdown !== null ? <Text style={styles.countdownText}>Capturing in {livenessCountdown}… hold the movement.</Text> : null}
                 {busy ? <Text style={styles.muted}>Analyzing the captured frame…</Text> : null}
@@ -930,10 +989,15 @@ export default function CheckInScreen() {
                 <View style={{ gap: 10 }}>
                   <Text style={styles.cameraModalTitle}>Face check needs another attempt</Text>
                   <Text style={styles.warningText}>{livenessError}</Text>
-                  <Text style={styles.muted}>Keep your face centered in good light. The same validated QR is retained while it remains valid.</Text>
+                  <Text style={styles.muted}>Keep your face sharp and centered, with even front lighting; do not bring the phone right up to your nose. A missing enrolled template cannot be fixed by moving closer. The validated QR is retained while valid.</Text>
                   <Pressable style={[styles.button, busy ? styles.buttonDisabled : null]} disabled={busy} onPress={() => void retryLivenessChallenge()}>
                     {busy ? <ActivityIndicator color="#07111f" /> : <Text style={styles.buttonText}>Start a fresh face check</Text>}
                   </Pressable>
+                  {/(no face-match candidates|not found among the candidates|match confidence was below the required threshold)/i.test(livenessError) ? (
+                    <Pressable style={styles.outlineButton} disabled={busy || biometricBusy} onPress={repairFaceProfile}>
+                      <Text style={styles.outlineButtonText}>Repair face enrollment</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : (
                 <View style={styles.livenessPromptRow}>

@@ -39,7 +39,8 @@ function createProviderResponse({
 
 function mockFetch(t, payload, {
     ok = true,
-    status = 200
+    status = 200,
+    inspectForm
 } = {}) {
     return t.mock.method(
         globalThis,
@@ -59,6 +60,7 @@ function mockFetch(t, payload, {
             );
 
             assert.ok(options.body instanceof FormData);
+            if (typeof inspectForm === "function") inspectForm(options.body);
 
             return {
                 ok,
@@ -95,6 +97,27 @@ test("accepts a live face matching the logged-in student", async (t) => {
     assert.equal(result.providerUserId, STUDENT_ID);
     assert.equal(result.similarity, 0.91);
     assert.equal(result.verificationId, "test-request-123");
+});
+
+test("retrieves low-scoring candidates separately from the strict verification threshold", async (t) => {
+    const previousCandidateThreshold = process.env.BIOMETRIC_CANDIDATE_THRESHOLD;
+    process.env.BIOMETRIC_CANDIDATE_THRESHOLD = "0.000001";
+    mockFetch(t, createProviderResponse(), {
+        inspectForm(form) {
+            assert.equal(form.get("limit"), "25");
+            assert.equal(form.get("threshold"), "0.000001");
+            assert.equal(Number(process.env.BIOMETRIC_MATCH_THRESHOLD), 0.40);
+        },
+    });
+
+    try {
+        const result = await verifyStudent();
+        assert.equal(result.verified, true);
+        assert.equal(result.similarity, 0.91);
+    } finally {
+        if (previousCandidateThreshold === undefined) delete process.env.BIOMETRIC_CANDIDATE_THRESHOLD;
+        else process.env.BIOMETRIC_CANDIDATE_THRESHOLD = previousCandidateThreshold;
+    }
 });
 
 test("matches the logged-in student's face even when another identity ranks first", async (t) => {

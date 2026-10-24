@@ -83,7 +83,7 @@ services:
       - key: BIOMETRIC_MATCH_THRESHOLD
         value: "0.40"
       - key: BIOMETRIC_CANDIDATE_THRESHOLD
-        value: "0.01"
+        value: "0.000001"
       - key: BIOMETRIC_ACTIVE_FRAME_MATCH_THRESHOLD
         value: "0.30"
       - key: ACTIVE_LIVENESS_CENTER_MAX_OFFSET
