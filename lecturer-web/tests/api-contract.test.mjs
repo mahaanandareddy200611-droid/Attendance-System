@@ -99,7 +99,7 @@ test("active liveness UI follows the backend five-frame challenge contract", () 
   assert.match(livenessService, /frames\.length !== 5/);
   assert.match(livenessCapture, /issuedSteps\.length === 5/);
   assert.match(livenessCapture, /currentStep < challenge\.steps\.length - 1/);
-  assert.match(livenessCapture, /Step \{currentStep \+ 1\} of \{challenge\.steps\.length\}/);
+  assert.match(livenessCapture, /STEP \{currentStep \+ 1\} OF \{challenge\.steps\.length\} · \{prompt\.label\}/);
   assert.match(livenessCapture, /Five live frames are checked against your enrolled identity/);
   assert.match(studentBiometric, /frames\.length !== 5/);
 });
