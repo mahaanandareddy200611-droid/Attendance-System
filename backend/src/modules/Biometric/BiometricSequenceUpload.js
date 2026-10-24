@@ -20,7 +20,7 @@ function detectMime(buffer) {
 
 const upload = multer({
     storage: multer.memoryStorage(),
-    limits: { fileSize: MAX_FILE_BYTES, files: 3, fields: 3, parts: 6, fieldNameSize: 100, fieldSize: 2048 },
+    limits: { fileSize: MAX_FILE_BYTES, files: 5, fields: 3, parts: 8, fieldNameSize: 100, fieldSize: 2048 },
     fileFilter(_req, file, callback) {
         if (!Object.hasOwn(MIME_FORMAT, file.mimetype)) return callback(new AppError('Only JPEG, PNG and WebP frames are allowed', 415));
         return callback(null, true);
@@ -29,7 +29,7 @@ const upload = multer({
 
 async function validateFrameBytes(req, _res, next) {
     try {
-        if (!Array.isArray(req.files) || req.files.length !== 3) throw new AppError('Exactly three liveness frames are required', 400);
+        if (!Array.isArray(req.files) || req.files.length !== 5) throw new AppError('Exactly five liveness frames are required', 400);
         for (const file of req.files) {
             const detected = detectMime(file.buffer);
             if (!detected || detected !== file.mimetype) throw new AppError('A liveness frame is not a valid image of its declared type', 415);

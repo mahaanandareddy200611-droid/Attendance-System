@@ -134,7 +134,7 @@ export async function verifyActiveLiveness({
   challenge: string;
   frames: string[];
 }) {
-  if (frames.length !== 3) throw new Error("Exactly three camera frames are required.");
+  if (frames.length !== 5) throw new Error("Exactly five camera frames are required.");
   const form = new FormData();
   form.append("sessionId", sessionId);
   form.append("challengeId", challengeId);

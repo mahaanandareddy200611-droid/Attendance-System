@@ -2,15 +2,21 @@
 
 const AppError = require('../../utils/AppError');
 
-// InsightFace's five-point landmark order: left eye, right eye, nose,
-// left mouth corner, right mouth corner. The ratio is scale-independent.
+// InsightFace's five-point order: left eye, right eye, nose, left mouth,
+// right mouth. Movement is normalized by inter-eye distance for scale stability.
 function normalizeLandmarks(raw) {
     let points = raw;
     if (points && !Array.isArray(points)) {
         if (Array.isArray(points.points)) points = points.points;
         else if (Array.isArray(points.landmarks)) points = points.landmarks;
         else {
-            const named = [points.left_eye || points.leftEye || points.eye_left, points.right_eye || points.rightEye || points.eye_right, points.nose || points.nose_tip, points.left_mouth || points.leftMouth || points.mouth_left, points.right_mouth || points.rightMouth || points.mouth_right];
+            const named = [
+                points.left_eye || points.leftEye || points.eye_left,
+                points.right_eye || points.rightEye || points.eye_right,
+                points.nose || points.nose_tip,
+                points.left_mouth || points.leftMouth || points.mouth_left,
+                points.right_mouth || points.rightMouth || points.mouth_right
+            ];
             if (named.every(Boolean)) points = named;
         }
     }
@@ -32,40 +38,66 @@ function normalizeLandmarks(raw) {
     return normalized;
 }
 
+function eyeDistance(points) {
+    const distance = Math.abs(points[1].x - points[0].x);
+    if (!Number.isFinite(distance) || distance < 1) {
+        throw new AppError('Face movement could not be estimated from the provided image', 401);
+    }
+    return distance;
+}
+
 function measureYawOffset(rawLandmarks) {
     const points = normalizeLandmarks(rawLandmarks);
-    const leftEyeX = points[0].x;
-    const rightEyeX = points[1].x;
-    const noseX = points[2].x;
-    const eyeDistance = Math.abs(rightEyeX - leftEyeX);
-    if (!Number.isFinite(eyeDistance) || eyeDistance < 1) {
-        throw new AppError('Face angle could not be estimated from the provided image', 401);
-    }
-    return (noseX - ((leftEyeX + rightEyeX) / 2)) / eyeDistance;
+    return (points[2].x - ((points[0].x + points[1].x) / 2)) / eyeDistance(points);
+}
+
+// Vertical prompt measures the face's nose position within the camera frame,
+// relative to inter-eye distance. It asks the user to move up/down in-frame.
+function measureVerticalPosition(rawLandmarks) {
+    const points = normalizeLandmarks(rawLandmarks);
+    return points[2].y / eyeDistance(points);
 }
 
 function assertActiveSequence(steps, frameLandmarks) {
-    if (!Array.isArray(steps) || steps.length !== 3 || !Array.isArray(frameLandmarks) || frameLandmarks.length !== 3) {
-        throw new AppError('Exactly three ordered liveness frames are required', 400);
+    const requiredMovements = ['MOVE_DOWN', 'MOVE_UP', 'TURN_LEFT', 'TURN_RIGHT'];
+    if (!Array.isArray(steps) || steps.length !== 5 || !Array.isArray(frameLandmarks) || frameLandmarks.length !== 5) {
+        throw new AppError('Exactly five ordered liveness frames are required', 400);
     }
-    if (steps[0] !== 'CENTER' || !steps.slice(1).includes('TURN_LEFT') || !steps.slice(1).includes('TURN_RIGHT')) {
+    const movements = steps.slice(1).slice().sort();
+    if (steps[0] !== 'CENTER' || JSON.stringify(movements) !== JSON.stringify(requiredMovements)) {
         throw new AppError('Active liveness challenge is invalid', 500);
     }
-    const centerMax = Number(process.env.ACTIVE_LIVENESS_CENTER_MAX_OFFSET) || 0.10;
-    const turnMin = Number(process.env.ACTIVE_LIVENESS_TURN_MIN_OFFSET) || 0.14;
-    const offsets = frameLandmarks.map(measureYawOffset);
-    if (Math.abs(offsets[0]) > centerMax) {
-        throw new AppError('Keep your face facing forward for the first frame', 401);
+
+    const centerMax = Number(process.env.ACTIVE_LIVENESS_CENTER_MAX_OFFSET) || 0.25;
+    const turnMin = Number(process.env.ACTIVE_LIVENESS_TURN_MIN_OFFSET) || 0.12;
+    const verticalMin = Number(process.env.ACTIVE_LIVENESS_VERTICAL_MIN_OFFSET) || 0.12;
+    const yawOffsets = frameLandmarks.map(measureYawOffset);
+    const verticalPositions = frameLandmarks.map(measureVerticalPosition);
+    if (Math.abs(yawOffsets[0]) > centerMax) {
+        throw new AppError('Center your face and look straight ahead for the first frame', 401);
     }
+
     for (let i = 1; i < steps.length; i++) {
-        if (steps[i] === 'TURN_LEFT' && offsets[i] > -turnMin) {
-            throw new AppError('The requested left-turn movement was not detected', 401);
+        const yawChange = yawOffsets[i] - yawOffsets[0];
+        const verticalChange = verticalPositions[i] - verticalPositions[0];
+        if (steps[i] === 'TURN_LEFT' && yawChange > -turnMin) {
+            throw new AppError('Left movement was not detected. Follow the ← arrow and move your nose toward the left edge of the preview.', 401);
         }
-        if (steps[i] === 'TURN_RIGHT' && offsets[i] < turnMin) {
-            throw new AppError('The requested right-turn movement was not detected', 401);
+        if (steps[i] === 'TURN_RIGHT' && yawChange < turnMin) {
+            throw new AppError('Right movement was not detected. Follow the → arrow and move your nose toward the right edge of the preview.', 401);
+        }
+        if (steps[i] === 'MOVE_UP' && verticalChange > -verticalMin) {
+            throw new AppError('Upward movement was not detected. Follow the ↑ arrow and move your face slightly upward inside the preview.', 401);
+        }
+        if (steps[i] === 'MOVE_DOWN' && verticalChange < verticalMin) {
+            throw new AppError('Downward movement was not detected. Follow the ↓ arrow and move your face slightly downward inside the preview.', 401);
         }
     }
-    return { yawOffsets: offsets, version: 'ACTIVE_SEQUENCE_V1' };
+    return {
+        yawOffsets,
+        verticalOffsets: verticalPositions.map((value) => value - verticalPositions[0]),
+        version: 'ACTIVE_SEQUENCE_V2'
+    };
 }
 
-module.exports = { normalizeLandmarks, measureYawOffset, assertActiveSequence };
+module.exports = { normalizeLandmarks, measureYawOffset, measureVerticalPosition, assertActiveSequence };

@@ -209,7 +209,7 @@ exports.createActiveChallenge = asyncHandler(async (req, res) => {
 });
 
 exports.verifyActiveSequence = asyncHandler(async (req, res) => {
-    if (!Array.isArray(req.files) || req.files.length !== 3) throw new AppError('Exactly three liveness frames are required', 400);
+    if (!Array.isArray(req.files) || req.files.length !== 5) throw new AppError('Exactly five liveness frames are required', 400);
     const { sessionId, challengeId, challenge } = req.body;
     const result = await biometricService.verifyActiveSequence({
         userId: req.user.id,

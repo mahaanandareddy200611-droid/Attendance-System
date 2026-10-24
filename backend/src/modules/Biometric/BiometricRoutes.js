@@ -191,7 +191,7 @@ router.post(
     Auth,
     authorize("Student"),
     verifyLimits.user,
-    sequenceUpload.array("frames", 3),
+    sequenceUpload.array("frames", 5),
     sequenceUpload.validateFrameBytes,
     validate(activeVerifySchema),
     requireActiveEligibleSession,
