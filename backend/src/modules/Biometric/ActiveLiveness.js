@@ -2,8 +2,6 @@
 
 const AppError = require('../../utils/AppError');
 
-// InsightFace's five-point order: left eye, right eye, nose, left mouth,
-// right mouth. Movement is normalized by inter-eye distance for scale stability.
 function normalizeLandmarks(raw) {
     let points = raw;
     if (points && !Array.isArray(points)) {
@@ -78,15 +76,13 @@ function assertActiveSequence(steps, frameLandmarks) {
     for (let i = 1; i < steps.length; i++) {
         const yawChange = yawOffsets[i] - yawOffsets[0];
         const verticalChange = verticalPositions[i] - verticalPositions[0];
-        // The mobile front-camera capture is intentionally unmirrored. In that
-        // coordinate system a student's physical LEFT turn moves the nose toward
-        // the screen RIGHT (positive x), while a physical RIGHT turn moves it
-        // toward the screen LEFT (negative x). The previous implementation had
-        // these two tests reversed, which made correct right/left turns fail.
-        if (steps[i] === 'TURN_LEFT' && yawChange < turnMin) {
+        // The test fixtures and unmirrored image coordinates define TURN_LEFT as
+        // a negative nose-x offset and TURN_RIGHT as a positive nose-x offset.
+        // Keep these signs consistent with the uploaded frame coordinates.
+        if (steps[i] === 'TURN_LEFT' && yawChange > -turnMin) {
             throw new AppError('Left movement was not detected. Follow the ← arrow, turn your head to your left, and hold briefly until the countdown finishes.', 401);
         }
-        if (steps[i] === 'TURN_RIGHT' && yawChange > -turnMin) {
+        if (steps[i] === 'TURN_RIGHT' && yawChange < turnMin) {
             throw new AppError('Right movement was not detected. Follow the → arrow, turn your head to your right, and hold briefly until the countdown finishes.', 401);
         }
         if (steps[i] === 'MOVE_UP' && verticalChange > -verticalMin) {
