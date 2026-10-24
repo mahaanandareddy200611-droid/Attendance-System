@@ -12,7 +12,7 @@ const request =
 
         const baseUrl = process.env.BIOMETRIC_BASE_URL;
         const apiKey = process.env.BIOMETRIC_API_KEY;
-        const timeoutMs = Number(process.env.BIOMETRIC_TIMEOUT_MS) || 5000;
+        const timeoutMs = Number(process.env.BIOMETRIC_TIMEOUT_MS) || 30000;
         if (!baseUrl || !apiKey) {
             const error = new AppError("Biometric provider is not configured", 503);
             error.publicMessage = "Face verification is temporarily unavailable. Please try again later.";
@@ -491,10 +491,33 @@ exports.detect = async ({ userId, imageBuffer, mimeType }) => {
     const liveScore = Number(liveness.live_score);
     if (!Number.isFinite(liveScore) || liveScore < 0 || liveScore > 1) throw new AppError('Biometric provider returned an invalid liveness score', 502);
 
-    if (result.identity_verified !== true || String(result.matched_person_id || '') !== userId) {
+    // The current standalone provider returns detection + liveness, but older
+    // deployed versions do not return the identity fields in /v1/detect.
+    // Fail closed if the provider supplies a partial/malformed identity result.
+    // For the legacy contract only, run the existing enrolled-face search on
+    // this exact same frame; verify() enforces liveness, top match and threshold.
+    const identityFieldsPresent = [
+        'identity_verified',
+        'matched_person_id',
+        'identity_similarity'
+    ].some((key) => Object.prototype.hasOwnProperty.call(result, key));
+
+    let identityVerified = result.identity_verified === true;
+    let matchedPersonId = String(result.matched_person_id || '');
+    let identitySimilarity = Number(result.identity_similarity);
+    let identityVerificationId = String(result.identity_request_id || result.request_id || '');
+
+    if (!identityFieldsPresent) {
+        const identityResult = await exports.verify({ userId, imageBuffer, mimeType });
+        identityVerified = identityResult?.verified === true;
+        matchedPersonId = String(identityResult?.providerUserId || '');
+        identitySimilarity = Number(identityResult?.similarity);
+        identityVerificationId = String(identityResult?.verificationId || identityVerificationId);
+    }
+
+    if (identityVerified !== true || matchedPersonId !== userId) {
         throw new AppError('The face did not match the enrolled student in this liveness frame. Keep the same person in view throughout the challenge.', 401);
     }
-    const identitySimilarity = Number(result.identity_similarity);
     if (!Number.isFinite(identitySimilarity) || identitySimilarity < 0 || identitySimilarity > 1) {
         throw new AppError('Biometric provider returned an invalid identity similarity score', 502);
     }
@@ -506,7 +529,7 @@ exports.detect = async ({ userId, imageBuffer, mimeType }) => {
         identityVerified: true,
         providerUserId: userId,
         identitySimilarity,
-        identityVerificationId: String(result.identity_request_id || result.request_id || ''),
+        identityVerificationId,
         landmarks: ActiveLiveness.normalizeLandmarks(face.landmarks || face.keypoints)
     };
 };

@@ -79,7 +79,7 @@ services:
       - key: BIOMETRIC_MODEL_VERSION
         sync: false
       - key: BIOMETRIC_TIMEOUT_MS
-        value: "15000"
+        value: "30000"
       - key: BIOMETRIC_MATCH_THRESHOLD
         value: "0.40"
       - key: BIOMETRIC_LIVENESS_THRESHOLD

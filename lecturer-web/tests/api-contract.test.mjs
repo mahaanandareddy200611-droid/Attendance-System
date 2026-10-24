@@ -111,7 +111,7 @@ test("biometric and QR requests allow provider processing and Render cold starts
   const studentAttendance = read("student-app/src/lib/attendance.ts");
   const lecturerAttendance = frontend("src/services/attendance.service.js");
 
-  assert.match(render, /key: BIOMETRIC_TIMEOUT_MS\s+value: "15000"/);
+  assert.match(render, /key: BIOMETRIC_TIMEOUT_MS\s+value: "30000"/);
   assert.match(livenessService, /timeout: 30000/);
   assert.match(livenessService, /timeout: 120000/);
   assert.match(lecturerAttendance, /validate-qr", \{ token \}, \{ timeout: 90000 \}/);
