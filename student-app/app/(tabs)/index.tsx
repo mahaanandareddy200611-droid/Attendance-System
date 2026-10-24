@@ -281,6 +281,65 @@ export default function CheckInScreen() {
     );
   };
 
+  const repairFaceProfile = () => {
+    if (!token || busy || biometricBusy) return;
+    Alert.alert(
+      "Repair face enrollment?",
+      "This removes the current biometric profile and asks you to enroll again. You will need fresh consent and lecturer approval before attendance is enabled. Use this if repeated checks say no face-match candidates were found.",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove and re-enroll",
+          style: "destructive",
+          onPress: async () => {
+            if (!token || busy || biometricBusy) return;
+            setBiometricBusy(true);
+            void deleteTemporaryPhotos(frameUris);
+            setCameraMode("none");
+            setCameraReady(false);
+            setEnrollmentCountdown(null);
+            setLivenessCountdown(null);
+            setFrameUris([]);
+            setActiveChallenge(null);
+            setValidationTicket(null);
+            setAssertionId("");
+            setPendingAttempt(null);
+            setLivenessError("");
+            scannerLock.current = false;
+            captureLock.current = false;
+            automaticLivenessCapture.current = false;
+            autoStartedTicketId.current = "";
+            challengeStartedForTicket.current = "";
+
+            try {
+              const response = await deleteFaceEnrollment(token);
+              const nextStatus = response.data?.status || "REVOKED";
+              setBiometricStatus(nextStatus);
+              if (nextStatus === "DELETE_PENDING") {
+                setFaceConsentAccepted(false);
+                showNotice("Profile deletion is pending. Attendance remains disabled until the provider confirms deletion; retry from the setup checklist later.", "error");
+              } else {
+                setFaceConsentAccepted(false);
+                showNotice("Old face profile removed. Accept the face-processing notice, enroll again in good front lighting, and wait for lecturer approval before check-in.", "success");
+              }
+            } catch (error) {
+              setBiometricStatus("DELETE_PENDING");
+              setFaceConsentAccepted(false);
+              showNotice(
+                errorStatus(error) === 503
+                  ? "Provider deletion is pending. Attendance stays disabled while the backend retries deletion."
+                  : getMessage(error),
+                "error",
+              );
+            } finally {
+              setBiometricBusy(false);
+            }
+          },
+        },
+      ],
+    );
+  };
+
   const startLiveness = useCallback(async () => {
     if (!token || !sessionId || !validationTicket) {
       showNotice("Scan and validate the selected class QR before face/liveness verification.", "error");
@@ -934,6 +993,11 @@ export default function CheckInScreen() {
                   <Pressable style={[styles.button, busy ? styles.buttonDisabled : null]} disabled={busy} onPress={() => void retryLivenessChallenge()}>
                     {busy ? <ActivityIndicator color="#07111f" /> : <Text style={styles.buttonText}>Start a fresh face check</Text>}
                   </Pressable>
+                  {/(no face-match candidates|not found among the candidates|match confidence was below the required threshold)/i.test(livenessError) ? (
+                    <Pressable style={styles.outlineButton} disabled={busy || biometricBusy} onPress={repairFaceProfile}>
+                      <Text style={styles.outlineButtonText}>Repair face enrollment</Text>
+                    </Pressable>
+                  ) : null}
                 </View>
               ) : (
                 <View style={styles.livenessPromptRow}>

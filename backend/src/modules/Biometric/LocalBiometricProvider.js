@@ -409,13 +409,13 @@ exports.verify =
         }
 
         const configuredCandidateThreshold =
-            Number(process.env.BIOMETRIC_CANDIDATE_THRESHOLD || "0.01");
+            Number(process.env.BIOMETRIC_CANDIDATE_THRESHOLD || "0.000001");
         const candidateThreshold =
             Number.isFinite(configuredCandidateThreshold) &&
             configuredCandidateThreshold > 0 &&
             configuredCandidateThreshold <= minimumThreshold
                 ? configuredCandidateThreshold
-                : Math.min(0.01, minimumThreshold);
+                : Math.min(0.000001, minimumThreshold);
 
         form.append("threshold", String(candidateThreshold));
 
@@ -472,7 +472,7 @@ exports.verify =
 
         if (matches.length === 0) {
             throw new AppError(
-                "No face candidates were found. Move closer, face the light, keep your face centered, and retry.",
+                "The recognition service returned no face-match candidates. This can mean the enrolled template is missing or out of sync; moving closer alone may not fix it. Retry once, then repair the face enrollment if it persists.",
                 401
             );
         }
