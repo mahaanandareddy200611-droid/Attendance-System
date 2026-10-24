@@ -119,3 +119,17 @@ test("biometric and QR requests allow provider processing and Render cold starts
   assert.match(studentBiometric, /timeoutMs: 120000/);
   assert.match(studentAttendance, /timeoutMs: 90000/);
 });
+
+ 
+test("face enrollment and approval requests allow Render startup and provider processing", () => {
+  const lecturerBiometric = frontend("src/services/biometric.service.js");
+  const studentBiometric = read("student-app/src/lib/biometric.ts");
+
+  assert.match(lecturerBiometric, /getMyBiometricEnrollment.*timeout: 90000/);
+  assert.match(lecturerBiometric, /getPendingBiometricEnrollments.*timeout: 90000/);
+  assert.ok(lecturerBiometric.includes('approve`, {}, { timeout: 90000 });'));
+  assert.ok(lecturerBiometric.includes('reject`, {}, { timeout: 90000 });'));
+  assert.ok(lecturerBiometric.includes('return api.post("/biometric/enroll", form, { timeout: 90000 });'));
+  assert.match(studentBiometric, /timeoutMs: 120000/);
+  assert.match(studentBiometric, /timeoutMs: 90000/);
+});
