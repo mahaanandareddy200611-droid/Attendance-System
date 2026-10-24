@@ -225,7 +225,7 @@ function expectedSigV4Signature({ method, url, headers, secretAccessKey, region,
   const signedHeaderNames = Object.keys(headers).sort();
   const canonicalHeaders = signedHeaderNames
     .map((name) => name + ":" + String(headers[name]).trim())
-    .join("\n");
+    .join("\n") + "\n";
   const signedHeaders = signedHeaderNames.join(";");
   const canonicalRequest = [
     method,
@@ -250,7 +250,7 @@ function expectedSigV4Signature({ method, url, headers, secretAccessKey, region,
   return hmac(signingKey, stringToSign, "hex");
 }
 
-test("SigV4 authorization uses a canonical request without an extra blank line", async (t) => {
+test("SigV4 authorization includes the required newline after canonical headers", async (t) => {
   setStorageEnvironment(t);
   const originalFetch = global.fetch;
   let captured;
