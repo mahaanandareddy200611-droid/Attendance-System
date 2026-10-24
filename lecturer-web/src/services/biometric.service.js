@@ -1,11 +1,11 @@
 import api from "../api/api";
 
-export const getMyBiometricEnrollment = () => api.get("/biometric/me");
-export const getPendingBiometricEnrollments = () => api.get("/biometric/enrollment-approvals");
+export const getMyBiometricEnrollment = () => api.get("/biometric/me", { timeout: 90000 });
+export const getPendingBiometricEnrollments = () => api.get("/biometric/enrollment-approvals", { timeout: 90000 });
 export const approveBiometricEnrollment = (studentId) =>
-  api.post(`/biometric/enrollment-approvals/${encodeURIComponent(studentId)}/approve`);
+  api.post(`/biometric/enrollment-approvals/${encodeURIComponent(studentId)}/approve`, {}, { timeout: 90000 });
 export const rejectBiometricEnrollment = (studentId) =>
-  api.post(`/biometric/enrollment-approvals/${encodeURIComponent(studentId)}/reject`);
+  api.post(`/biometric/enrollment-approvals/${encodeURIComponent(studentId)}/reject`, {}, { timeout: 90000 });
 
 async function prepareBiometricImage(image) {
   if (
@@ -46,7 +46,7 @@ export async function enrollBiometric(image) {
   form.append("image", photo, photo.name || "enrollment.jpg");
   form.append("consent", "true");
   form.append("consentVersion", "face-attendance-v1");
-  return api.post("/biometric/enroll", form);
+  return api.post("/biometric/enroll", form, { timeout: 90000 });
 }
 
 export async function verifyBiometricForSession({ sessionId, image }) {

@@ -80,7 +80,7 @@ async function appendImagePart(form: FormData, fieldName: string, uri: string, f
 }
 
 export async function getBiometricEnrollment(token: string) {
-  const response = await apiRequest<any>("/biometric/me", { token });
+  const response = await apiRequest<any>("/biometric/me", { token, timeoutMs: 90000 });
   return response.data ?? null;
 }
 
@@ -96,12 +96,12 @@ export async function enrollFace(token: string, imageUri: string, consentGiven: 
     method: "POST",
     token,
     body: form,
-    timeoutMs: 60000,
+    timeoutMs: 120000,
   });
 }
 
 export async function deleteFaceEnrollment(token: string) {
-  return apiRequest<any>("/biometric/me", { method: "DELETE", token });
+  return apiRequest<any>("/biometric/me", { method: "DELETE", token, timeoutMs: 90000 });
 }
 
 export async function issueActiveLivenessChallenge(token: string, sessionId: string) {
