@@ -182,6 +182,33 @@ async function ensureCollection() {
 
 exports.ensureCollection = ensureCollection;
 
+function isMissingCollectionError(error) {
+    const response = error?.providerResponse;
+    const message = [
+        error?.message,
+        response?.error?.message,
+        response?.message,
+        response?.detail
+    ].filter(Boolean).join(' ');
+    return Number(error?.statusCode) === 404 && /collection not found/i.test(message);
+}
+
+/**
+ * Retry an operation once after repairing only the provider's missing-collection
+ * condition. Other 404s (such as a missing person) are not masked or retried.
+ */
+async function requestWithCollectionRecovery(options) {
+    try {
+        return await request(options);
+    } catch (error) {
+        if (!isMissingCollectionError(error)) throw error;
+        // Re-check even if this process had previously cached the collection.
+        collectionEnsureCache = null;
+        await ensureCollection();
+        return request(options);
+    }
+}
+
 /**
  * Verify that the configured provider is reachable and has its model/API
  * initialized. Never treat non-empty environment variables as proof of health.
@@ -190,7 +217,6 @@ exports.checkHealth = async () => {
     try {
         const health = await request({ path: "/v1/health" });
         if (health?.status !== "ready" || health?.auth_enabled !== true) return false;
-        await ensureCollection();
         return true;
     } catch {
         // Readiness must fail closed without exposing provider URLs or secrets.
@@ -224,8 +250,6 @@ exports.enroll =
             );
         }
 
-
-        await ensureCollection();
 
         const form =
             new FormData();
@@ -270,7 +294,7 @@ exports.enroll =
 
 
         const result =
-            await request({
+            await requestWithCollectionRecovery({
                 path:
                     `/v1/collections/` +
                     `${process.env.BIOMETRIC_COLLECTION_ID || "students"}/persons`,
@@ -349,8 +373,6 @@ exports.verify =
         }
 
 
-        await ensureCollection();
-
         const form =
             new FormData();
 
@@ -390,7 +412,7 @@ exports.verify =
 
 
         const result =
-            await request({
+            await requestWithCollectionRecovery({
                 path:
                     `/v1/collections/` +
                     `${process.env.BIOMETRIC_COLLECTION_ID || "students"}/search`,
@@ -535,8 +557,6 @@ exports.detect = async ({ userId, imageBuffer, mimeType }) => {
     if (!Buffer.isBuffer(imageBuffer)) throw new AppError('Biometric frame is required', 400);
     if (!userId || typeof userId !== 'string') throw new AppError('Authenticated student identity is required for liveness', 400);
 
-    await ensureCollection();
-
     const form = new FormData();
     form.append('image', new Blob([imageBuffer], { type: mimeType || 'image/jpeg' }), 'liveness-frame.jpg');
     form.append('max_faces', '2');
@@ -544,7 +564,7 @@ exports.detect = async ({ userId, imageBuffer, mimeType }) => {
     // The provider must check face detection, passive PAD and enrolled identity
     // within this same request/frame, rather than matching only the initial frame.
     form.append('expected_person_id', userId);
-    const result = await request({ path: '/v1/detect', method: 'POST', body: form });
+    const result = await requestWithCollectionRecovery({ path: '/v1/detect', method: 'POST', body: form });
 
     if (!Array.isArray(result?.faces) || result.faces.length !== 1) {
         if (!Array.isArray(result?.faces) || result.faces.length === 0) {

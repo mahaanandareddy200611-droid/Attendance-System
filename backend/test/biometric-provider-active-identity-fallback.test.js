@@ -76,7 +76,7 @@ test("active-frame detection performs same-frame enrolled identity verification 
   assert.equal(accepted.providerUserId, studentId);
   assert.equal(accepted.identitySimilarity, 0.94);
   assert.equal(accepted.identityVerificationId, "identity-request");
-  assert.deepEqual(calledPaths.slice(0, 3), ["/v1/collections/students", "/v1/detect", "/v1/collections/students/search"]);
+  assert.deepEqual(calledPaths.slice(0, 2), ["/v1/detect", "/v1/collections/students/search"]);
 
   matchedId = otherId;
   await assert.rejects(
