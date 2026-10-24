@@ -27,9 +27,14 @@ test("active-frame detection performs same-frame enrolled identity verification 
   let matchedId = studentId;
   const calledPaths = [];
 
-  global.fetch = async (urlValue) => {
+  global.fetch = async (urlValue, options = {}) => {
     const path = new URL(String(urlValue)).pathname;
     calledPaths.push(path);
+    if (path === "/v1/collections/students" && (options.method || "GET") === "GET") {
+      return new Response(JSON.stringify({ collection: { id: "students", name: "Attendance students", threshold: 0.4 } }), {
+        status: 200, headers: { "Content-Type": "application/json" },
+      });
+    }
     if (path === "/v1/detect") {
       return new Response(JSON.stringify({
         faces: [{
@@ -82,4 +87,60 @@ test("active-frame detection performs same-frame enrolled identity verification 
     }),
     (error) => error.statusCode === 401 && /identity does not match/.test(error.message),
   );
+});
+
+
+test("a missing provider collection is recreated idempotently before face recognition", async (t) => {
+  const envKeys = [
+    "BIOMETRIC_BASE_URL",
+    "BIOMETRIC_API_KEY",
+    "BIOMETRIC_COLLECTION_ID",
+    "BIOMETRIC_MATCH_THRESHOLD",
+    "BIOMETRIC_TIMEOUT_MS",
+  ];
+  const previousEnv = Object.fromEntries(envKeys.map((key) => [key, process.env[key]]));
+  Object.assign(process.env, {
+    BIOMETRIC_BASE_URL: "https://biometric.example.test",
+    BIOMETRIC_API_KEY: "test-only-api-key-that-is-longer-than-32-characters",
+    BIOMETRIC_COLLECTION_ID: "auto-repair-test",
+    BIOMETRIC_MATCH_THRESHOLD: "0.40",
+    BIOMETRIC_TIMEOUT_MS: "30000",
+  });
+  const originalFetch = global.fetch;
+  let exists = false;
+  const calls = [];
+  global.fetch = async (urlValue, options = {}) => {
+    const url = new URL(String(urlValue));
+    calls.push({ path: url.pathname, method: options.method || "GET" });
+    if (url.pathname === "/v1/collections/auto-repair-test" && (options.method || "GET") === "GET") {
+      return new Response(JSON.stringify(exists
+        ? { collection: { id: "auto-repair-test", name: "Attendance students", threshold: 0.4 } }
+        : { detail: "Collection not found" }), {
+        status: exists ? 200 : 404, headers: { "Content-Type": "application/json" },
+      });
+    }
+    if (url.pathname === "/v1/collections" && options.method === "POST") {
+      const body = JSON.parse(String(options.body));
+      assert.equal(body.id, "auto-repair-test");
+      exists = true;
+      return new Response(JSON.stringify({
+        collection: { id: body.id, name: body.name, threshold: body.threshold },
+      }), { status: 201, headers: { "Content-Type": "application/json" } });
+    }
+    throw new Error("Unexpected provider request: " + options.method + " " + url.pathname);
+  };
+  t.after(() => {
+    global.fetch = originalFetch;
+    for (const key of envKeys) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+  });
+
+  const first = await provider.ensureCollection();
+  assert.equal(first.created, true);
+  assert.equal(first.collectionId, "auto-repair-test");
+  const second = await provider.ensureCollection();
+  assert.equal(second.collectionId, "auto-repair-test");
+  assert.equal(calls.filter((call) => call.method === "POST").length, 1);
 });

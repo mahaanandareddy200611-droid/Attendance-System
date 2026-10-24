@@ -116,6 +116,99 @@ const request =
     };
 
 
+
+let collectionEnsureCache = null;
+
+/**
+ * Ensure the provider-side collection exists. If metadata was lost during a
+ * provider restart or disk/config change, recreate the collection metadata.
+ * This does not restore missing face templates: affected students must enroll
+ * again if the provider's persistent identity data was also lost.
+ */
+async function ensureCollection() {
+    const collectionId = String(process.env.BIOMETRIC_COLLECTION_ID || 'students').trim();
+    if (!/^[A-Za-z0-9._-]{1,64}$/.test(collectionId)) {
+        throw new AppError('Biometric collection ID is invalid', 500);
+    }
+    const baseUrl = String(process.env.BIOMETRIC_BASE_URL || '').replace(/\/$/, '');
+    const cacheKey = baseUrl + '|' + collectionId;
+    if (collectionEnsureCache?.key === cacheKey) return collectionEnsureCache.promise;
+
+    const promise = (async () => {
+        const collectionPath = '/v1/collections/' + encodeURIComponent(collectionId);
+        try {
+            const existing = await request({ path: collectionPath });
+            if (existing?.collection?.id === collectionId) return { collectionId, created: false };
+            throw new AppError('Biometric provider returned an invalid collection response', 503);
+        } catch (error) {
+            if (Number(error?.statusCode) !== 404) throw error;
+        }
+
+        const threshold = Number(process.env.BIOMETRIC_MATCH_THRESHOLD || 0.4);
+        if (!Number.isFinite(threshold) || threshold <= 0 || threshold > 1) {
+            throw new AppError('Biometric match threshold is invalid', 500);
+        }
+        try {
+            const created = await request({
+                path: '/v1/collections',
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    id: collectionId,
+                    name: 'Attendance students',
+                    threshold
+                })
+            });
+            if (created?.collection?.id === collectionId) return { collectionId, created: true };
+            throw new AppError('Biometric provider did not confirm collection creation', 503);
+        } catch (createError) {
+            // Another worker may have created it between the GET and POST.
+            if (Number(createError?.statusCode) === 409) {
+                const existing = await request({ path: collectionPath });
+                if (existing?.collection?.id === collectionId) return { collectionId, created: false };
+            }
+            throw createError;
+        }
+    })();
+
+    collectionEnsureCache = { key: cacheKey, promise };
+    try {
+        return await promise;
+    } catch (error) {
+        if (collectionEnsureCache?.promise === promise) collectionEnsureCache = null;
+        throw error;
+    }
+}
+
+exports.ensureCollection = ensureCollection;
+
+function isMissingCollectionError(error) {
+    const response = error?.providerResponse;
+    const message = [
+        error?.message,
+        response?.error?.message,
+        response?.message,
+        response?.detail
+    ].filter(Boolean).join(' ');
+    return Number(error?.statusCode) === 404 && /collection not found/i.test(message);
+}
+
+/**
+ * Retry an operation once after repairing only the provider's missing-collection
+ * condition. Other 404s (such as a missing person) are not masked or retried.
+ */
+async function requestWithCollectionRecovery(options) {
+    try {
+        return await request(options);
+    } catch (error) {
+        if (!isMissingCollectionError(error)) throw error;
+        // Re-check even if this process had previously cached the collection.
+        collectionEnsureCache = null;
+        await ensureCollection();
+        return request(options);
+    }
+}
+
 /**
  * Verify that the configured provider is reachable and has its model/API
  * initialized. Never treat non-empty environment variables as proof of health.
@@ -123,7 +216,8 @@ const request =
 exports.checkHealth = async () => {
     try {
         const health = await request({ path: "/v1/health" });
-        return health?.status === "ready" && health?.auth_enabled === true;
+        if (health?.status !== "ready" || health?.auth_enabled !== true) return false;
+        return true;
     } catch {
         // Readiness must fail closed without exposing provider URLs or secrets.
         return false;
@@ -200,7 +294,7 @@ exports.enroll =
 
 
         const result =
-            await request({
+            await requestWithCollectionRecovery({
                 path:
                     `/v1/collections/` +
                     `${process.env.BIOMETRIC_COLLECTION_ID || "students"}/persons`,
@@ -318,7 +412,7 @@ exports.verify =
 
 
         const result =
-            await request({
+            await requestWithCollectionRecovery({
                 path:
                     `/v1/collections/` +
                     `${process.env.BIOMETRIC_COLLECTION_ID || "students"}/search`,
@@ -470,7 +564,7 @@ exports.detect = async ({ userId, imageBuffer, mimeType }) => {
     // The provider must check face detection, passive PAD and enrolled identity
     // within this same request/frame, rather than matching only the initial frame.
     form.append('expected_person_id', userId);
-    const result = await request({ path: '/v1/detect', method: 'POST', body: form });
+    const result = await requestWithCollectionRecovery({ path: '/v1/detect', method: 'POST', body: form });
 
     if (!Array.isArray(result?.faces) || result.faces.length !== 1) {
         if (!Array.isArray(result?.faces) || result.faces.length === 0) {

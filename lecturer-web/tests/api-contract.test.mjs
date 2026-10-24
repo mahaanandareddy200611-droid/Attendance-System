@@ -99,8 +99,8 @@ test("active liveness UI follows the backend five-frame challenge contract", () 
   assert.match(livenessService, /frames\.length !== 5/);
   assert.match(livenessCapture, /issuedSteps\.length === 5/);
   assert.match(livenessCapture, /currentStep < challenge\.steps\.length - 1/);
-  assert.match(livenessCapture, /Step \{currentStep \+ 1\} of \{challenge\.steps\.length\}/);
-  assert.match(livenessCapture, /Five brief live frames/);
+  assert.match(livenessCapture, /STEP \{currentStep \+ 1\} OF \{challenge\.steps\.length\} · \{prompt\.label\}/);
+  assert.match(livenessCapture, /Five live frames are checked against your enrolled identity/);
   assert.match(studentBiometric, /frames\.length !== 5/);
 });
 
@@ -132,4 +132,20 @@ test("face enrollment and approval requests allow Render startup and provider pr
   assert.ok(lecturerBiometric.includes('return api.post("/biometric/enroll", form, { timeout: 90000 });'));
   assert.match(studentBiometric, /timeoutMs: 120000/);
   assert.match(studentBiometric, /timeoutMs: 90000/);
+});
+
+
+test("active liveness opens a modal and renders a prominent direction arrow for every challenge step", () => {
+  const livenessCapture = frontend("src/components/ActiveLivenessCapture.jsx");
+  const academicCss = frontend("src/Styles/Academic.css");
+  assert.match(livenessCapture, /active-liveness-modal-backdrop/);
+  assert.match(livenessCapture, /role="dialog" aria-modal="true"/);
+  assert.match(livenessCapture, /active-liveness-direction-symbol/);
+  assert.match(livenessCapture, /livenessDirection\(step\?\.step\)/);
+  assert.match(livenessCapture, /TURN_LEFT.*←/s);
+  assert.match(livenessCapture, /TURN_RIGHT.*→/s);
+  assert.match(livenessCapture, /MOVE_UP.*↑/s);
+  assert.match(livenessCapture, /MOVE_DOWN.*↓/s);
+  assert.match(academicCss, /\.active-liveness-modal-backdrop\s*\{/);
+  assert.match(academicCss, /\.active-liveness-direction-symbol\s*\{/);
 });

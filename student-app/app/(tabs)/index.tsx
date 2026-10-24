@@ -504,7 +504,7 @@ export default function CheckInScreen() {
       .then((challenge) => {
         setFrameUris([]);
         setActiveChallenge(challenge);
-        showNotice("Camera ready. Follow each visible instruction; three live frames will be captured automatically.", "info");
+        showNotice("Camera ready. Follow the large on-screen arrow; all five live frames will be captured automatically.", "info");
       })
       .catch((error) => {
         setActiveChallenge(null);
@@ -843,6 +843,15 @@ export default function CheckInScreen() {
                 <View style={styles.faceGuideOval} />
               </View>
             )}
+            {cameraMode === "liveness" && activeChallenge && activeStep ? (
+              <View pointerEvents="none" style={styles.liveDirectionOverlay}>
+                <Text style={styles.liveDirectionSymbol}>{livenessSymbol(activeStep.step)}</Text>
+                <View style={{ flex: 1, gap: 3 }}>
+                  <Text style={styles.liveDirectionStep}>STEP {frameUris.length + 1} OF {activeChallenge.steps.length} · {directionLabel(activeStep.step)}</Text>
+                  <Text style={styles.liveDirectionInstruction}>{activeStep.instruction}</Text>
+                </View>
+              </View>
+            ) : null}
           </View>
 
           <View style={styles.cameraPromptPanel}>
@@ -909,6 +918,16 @@ function livenessSymbol(step?: string) {
     case "MOVE_UP": return "↑";
     case "MOVE_DOWN": return "↓";
     default: return "◎";
+  }
+}
+
+function directionLabel(step?: string) {
+  switch (step) {
+    case "TURN_LEFT": return "TURN LEFT";
+    case "TURN_RIGHT": return "TURN RIGHT";
+    case "MOVE_UP": return "MOVE UP";
+    case "MOVE_DOWN": return "MOVE DOWN";
+    default: return "FACE FORWARD";
   }
 }
 
@@ -1001,6 +1020,10 @@ const styles = StyleSheet.create({
   cameraModalPreview: { width: "100%", height: "100%" },
   cameraGuideOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, justifyContent: "center", alignItems: "center" },
   faceGuideOval: { width: 212, height: 240, borderWidth: 2, borderColor: "#70dfca", borderRadius: 140, backgroundColor: "rgba(11,18,32,0.03)" },
+  liveDirectionOverlay: { position: "absolute", left: 10, right: 10, bottom: 10, flexDirection: "row", alignItems: "center", gap: 10, paddingHorizontal: 12, paddingVertical: 10, borderRadius: 16, backgroundColor: "rgba(5,10,18,0.94)", borderWidth: 1, borderColor: "#70dfca", zIndex: 5, elevation: 8 },
+  liveDirectionSymbol: { width: 62, textAlign: "center", color: "#70dfca", fontSize: 54, lineHeight: 60, fontWeight: "900" },
+  liveDirectionStep: { color: "#70dfca", fontSize: 10, lineHeight: 14, fontWeight: "900", letterSpacing: 0.7 },
+  liveDirectionInstruction: { color: "#f3f7ff", fontSize: 13, lineHeight: 18, fontWeight: "700" },
   qrGuideFrame: { width: 234, height: 234, borderWidth: 3, borderColor: "#70dfca", borderRadius: 20, backgroundColor: "rgba(11,18,32,0.03)" },
   cameraPromptPanel: { backgroundColor: "#151f2e", borderRadius: 18, padding: 15, gap: 11, borderWidth: 1, borderColor: "rgba(154,173,198,0.16)", flexShrink: 1 },
   livenessPromptRow: { flexDirection: "row", alignItems: "center", gap: 14 },
