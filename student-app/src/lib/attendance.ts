@@ -78,7 +78,7 @@ export async function validateAttendanceQr(token: string, qrToken: string) {
     method: "POST",
     token,
     body: { token: qrToken },
-    timeoutMs: 15000,
+    timeoutMs: 90000,
   });
   const ticket = response.data;
   if (!ticket?.validationId || !ticket?.sessionId) {

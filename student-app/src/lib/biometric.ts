@@ -96,7 +96,7 @@ export async function enrollFace(token: string, imageUri: string, consentGiven: 
     method: "POST",
     token,
     body: form,
-    timeoutMs: 30000,
+    timeoutMs: 60000,
   });
 }
 
@@ -109,6 +109,7 @@ export async function issueActiveLivenessChallenge(token: string, sessionId: str
     method: "POST",
     token,
     body: { sessionId },
+    timeoutMs: 30000,
   });
   if (!response.data?.challengeId || !response.data?.challenge || !Array.isArray(response.data?.steps)) {
     throw new Error("The server returned an invalid liveness challenge.");
@@ -146,7 +147,7 @@ export async function verifyActiveLiveness({
     method: "POST",
     token,
     body: form,
-    timeoutMs: 45000,
+    timeoutMs: 120000,
   });
   const assertionId = response.data?.assertionId;
   if (!assertionId) throw new Error("Liveness verification did not return a one-time assertion.");

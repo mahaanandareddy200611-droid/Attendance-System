@@ -87,3 +87,35 @@ test("student QR, enrollment and liveness pages share the 429-aware formatter", 
     );
   }
 });
+
+test("active liveness UI follows the backend five-frame challenge contract", () => {
+  const backendBiometric = read("backend/src/modules/Biometric/BiometricService.js");
+  const livenessService = frontend("src/services/biometric.service.js");
+  const livenessCapture = frontend("src/components/ActiveLivenessCapture.jsx");
+  const studentBiometric = read("student-app/src/lib/biometric.ts");
+
+  assert.ok(backendBiometric.includes("const steps = ['CENTER', ...directions]"));
+  assert.match(livenessService, /challenge\.steps\.length !== 5/);
+  assert.match(livenessService, /frames\.length !== 5/);
+  assert.match(livenessCapture, /issuedSteps\.length === 5/);
+  assert.match(livenessCapture, /currentStep < challenge\.steps\.length - 1/);
+  assert.match(livenessCapture, /Step \{currentStep \+ 1\} of \{challenge\.steps\.length\}/);
+  assert.match(livenessCapture, /Five brief live frames/);
+  assert.match(studentBiometric, /frames\.length !== 5/);
+});
+
+test("biometric and QR requests allow provider processing and Render cold starts", () => {
+  const render = read("render.yaml");
+  const livenessService = frontend("src/services/biometric.service.js");
+  const studentBiometric = read("student-app/src/lib/biometric.ts");
+  const studentAttendance = read("student-app/src/lib/attendance.ts");
+  const lecturerAttendance = frontend("src/services/attendance.service.js");
+
+  assert.match(render, /key: BIOMETRIC_TIMEOUT_MS\s+value: "15000"/);
+  assert.match(livenessService, /timeout: 30000/);
+  assert.match(livenessService, /timeout: 120000/);
+  assert.match(lecturerAttendance, /validate-qr", \{ token \}, \{ timeout: 90000 \}/);
+  assert.match(studentBiometric, /timeoutMs: 30000/);
+  assert.match(studentBiometric, /timeoutMs: 120000/);
+  assert.match(studentAttendance, /timeoutMs: 90000/);
+});

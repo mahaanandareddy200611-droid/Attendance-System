@@ -65,7 +65,7 @@ export async function verifyBiometricForSession({ sessionId, image }) {
 }
 
 export async function createActiveBiometricChallenge(sessionId) {
-  const response = await api.post("/biometric/challenge-active", { sessionId });
+  const response = await api.post("/biometric/challenge-active", { sessionId }, { timeout: 30000 });
   const challenge = response.data?.data;
   if (!challenge?.challengeId || !challenge?.challenge || !Array.isArray(challenge.steps)) {
     throw new Error("The server returned an invalid liveness challenge.");
@@ -88,7 +88,7 @@ export async function verifyActiveBiometricSequence({ sessionId, challengeId, ch
     form.append("frames", frame, frame.name || `liveness-frame-${index + 1}.jpg`);
   });
   const response = await api.post("/biometric/verify-active", form, {
-    timeout: 45000,
+    timeout: 120000,
   });
   return response.data.data.assertionId;
 }

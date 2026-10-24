@@ -123,8 +123,18 @@ export default function ActiveLivenessCapture({
     setBusy(true);
     void createActiveBiometricChallenge(sessionId)
       .then((issued) => {
-        if (!Array.isArray(issued.steps) || issued.steps.length !== 3) {
-          throw new Error("The server returned an invalid liveness sequence.");
+        const requiredMovements = new Set(["TURN_LEFT", "TURN_RIGHT", "MOVE_UP", "MOVE_DOWN"]);
+        const issuedSteps = Array.isArray(issued.steps) ? issued.steps : [];
+        const validSequence =
+          issuedSteps.length === 5 &&
+          issuedSteps[0]?.step === "CENTER" &&
+          issuedSteps.every((item, index) =>
+            item?.index === index && typeof item?.instruction === "string" && item.instruction.trim().length > 0
+          ) &&
+          issuedSteps.slice(1).every((item) => requiredMovements.has(item.step)) &&
+          new Set(issuedSteps.slice(1).map((item) => item.step)).size === 4;
+        if (!validSequence) {
+          throw new Error("The server returned an invalid five-step liveness sequence. Please retry so the app can request a fresh challenge.");
         }
         setChallenge(issued);
         setFrames([]);
@@ -175,7 +185,7 @@ export default function ActiveLivenessCapture({
         new File([blob], `liveness-frame-${currentStep + 1}.jpg`, { type: "image/jpeg" }),
       ];
 
-      if (currentStep < 2) {
+      if (currentStep < challenge.steps.length - 1) {
         setFrames(nextFrames);
         setCurrentStep(currentStep + 1);
         setMessage("Frame captured. Follow the next on-screen instruction; the next frame will be captured automatically.");
@@ -262,12 +272,12 @@ export default function ActiveLivenessCapture({
           />
           {step && (
             <div className="academic-notice" role="status">
-              Step {currentStep + 1} of 3: {step.instruction}
+              Step {currentStep + 1} of {challenge.steps.length}: {step.instruction}
             </div>
           )}
           <p className="camera-live-indicator">Camera active · frame capture and face/liveness matching are in progress</p>
           {captureCountdown !== null && <p className="academic-footnote" role="status">Next frame in {captureCountdown}… Follow the prompt and keep your face visible.</p>}
-          <p className="academic-footnote">Three brief live frames are sent to the configured biometric provider for matching and active-liveness checks. The camera stops when the check finishes or you stop it.</p>
+          <p className="academic-footnote">Five brief live frames are sent to the configured biometric provider for matching and active-liveness checks. The camera stops when the check finishes or you stop it.</p>
         </>
       )}
       {message && (
