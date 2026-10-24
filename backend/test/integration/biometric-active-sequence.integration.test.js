@@ -30,23 +30,31 @@ if (!mongoUrl || !configuredRedisUrl) {
   const provider = require("../../src/modules/Biometric/LocalBiometricProvider");
 
   const center = [
-    [20, 10], [120, 10], [70, 30], [40, 50], [100, 50],
+    [20, 30], [120, 30], [70, 60], [40, 90], [100, 90],
   ];
   const left = [
-    [20, 10], [120, 10], [50, 30], [40, 50], [100, 50],
+    [20, 30], [120, 30], [50, 60], [40, 90], [100, 90],
   ];
   const right = [
-    [20, 10], [120, 10], [90, 30], [40, 50], [100, 50],
+    [20, 30], [120, 30], [90, 60], [40, 90], [100, 90],
+  ];
+  const up = [
+    [20, 14], [120, 14], [70, 44], [40, 74], [100, 74],
+  ];
+  const down = [
+    [20, 46], [120, 46], [70, 76], [40, 106], [100, 106],
   ];
 
   const landmarksFor = (name) => {
     if (name === "CENTER") return center;
     if (name === "TURN_LEFT") return left;
     if (name === "TURN_RIGHT") return right;
+    if (name === "MOVE_UP") return up;
+    if (name === "MOVE_DOWN") return down;
     return center;
   };
 
-  test("active sequence binds user/session, checks all three frames, creates one assertion and rejects replay", {
+  test("active sequence binds user/session, checks five randomized motion frames, creates one assertion and rejects replay", {
     timeout: 30000,
   }, async (t) => {
     const userId = new mongoose.Types.ObjectId();
@@ -84,19 +92,27 @@ if (!mongoUrl || !configuredRedisUrl) {
 
     let detectionCalls = 0;
     let verificationCalls = 0;
-    t.mock.method(provider, "detect", async ({ imageBuffer }) => {
+    t.mock.method(provider, "detect", async ({ imageBuffer, userId: requestedUserId }) => {
       detectionCalls += 1;
-      return { landmarks: landmarksFor(imageBuffer.toString("utf8")) };
-    });
-    t.mock.method(provider, "verify", async ({ userId: requestedUserId }) => {
-      verificationCalls += 1;
+      const frameName = imageBuffer.toString("utf8");
+      if (frameName === "SWAPPED_FACE") {
+        return {
+          landmarks: landmarksFor("CENTER"),
+          livenessPassed: true,
+          identityVerified: false,
+          providerUserId: String(otherUserId),
+          identitySimilarity: 0.97,
+          identityVerificationId: "identity-" + crypto.randomUUID(),
+        };
+      }
       return {
-        verified: true,
+        landmarks: landmarksFor(frameName),
         livenessPassed: true,
-        faceMatchPassed: true,
-        similarity: 0.98,
-        verificationId: "verify-" + crypto.randomUUID(),
+        livenessScore: 0.99,
+        identityVerified: true,
         providerUserId: String(requestedUserId),
+        identitySimilarity: 0.98,
+        identityVerificationId: "identity-" + crypto.randomUUID(),
       };
     });
 
@@ -140,9 +156,9 @@ if (!mongoUrl || !configuredRedisUrl) {
 
     assert.equal(verified.verified, true);
     assert.equal(verified.activeLivenessPassed, true);
-    assert.equal(verified.livenessMode, "ACTIVE_SEQUENCE_V1");
-    assert.equal(detectionCalls, 3, "all three frames must be analyzed");
-    assert.equal(verificationCalls, 1, "identity verification must happen once");
+    assert.equal(verified.livenessMode, "ACTIVE_SEQUENCE_V2");
+    assert.equal(detectionCalls, 5, "all five frames must be analyzed for face, passive PAD and identity");
+    assert.equal(verificationCalls, 0, "identity verification is part of each frame's combined provider check");
 
     const assertion = await biometricService.validateAssertion({
       assertionId: verified.assertionId,
@@ -161,7 +177,29 @@ if (!mongoUrl || !configuredRedisUrl) {
       }),
       (error) => error.statusCode === 401,
     );
-    assert.equal(detectionCalls, 3, "replay must not call the provider again");
+    assert.equal(detectionCalls, 5, "replay must not call the provider again");
+
+    // A new person's face may pass passive PAD and even perform the requested
+    // motion; identity must be checked on every frame, not only frame zero.
+    const switchedFaceChallenge = await biometricService.createActiveChallenge({ userId, sessionId });
+    challengeIds.push(switchedFaceChallenge.challengeId);
+    const switchedFaceFrames = switchedFaceChallenge.steps.map(({ step }) => ({
+      imageBuffer: Buffer.from(step),
+      mimeType: "image/jpeg",
+    }));
+    switchedFaceFrames[2] = { imageBuffer: Buffer.from("SWAPPED_FACE"), mimeType: "image/jpeg" };
+    const callsBeforeSwitch = detectionCalls;
+    await assert.rejects(
+      biometricService.verifyActiveSequence({
+        userId,
+        sessionId,
+        challengeId: switchedFaceChallenge.challengeId,
+        challenge: switchedFaceChallenge.challenge,
+        frames: switchedFaceFrames,
+      }),
+      (error) => error.statusCode === 401 && /same enrolled face/i.test(error.message),
+    );
+    assert.equal(detectionCalls, callsBeforeSwitch + 3, "the identity switch must be rejected as soon as that frame is checked");
 
     const badSequenceChallenge = await biometricService.createActiveChallenge({ userId, sessionId });
     challengeIds.push(badSequenceChallenge.challengeId);
@@ -179,7 +217,7 @@ if (!mongoUrl || !configuredRedisUrl) {
       }),
       (error) => error.statusCode === 401,
     );
-    assert.equal(verificationCalls, 1, "failed head-turn sequence must not reach identity verification");
+    assert.equal(verificationCalls, 0, "failed movement sequence must not issue a separate identity request");
 
     await assert.rejects(
       biometricService.verifyActiveSequence({

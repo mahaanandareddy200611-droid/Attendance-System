@@ -5,6 +5,7 @@ import {
   ActivityIndicator,
   Alert,
   KeyboardAvoidingView,
+  Modal,
   Platform,
   Pressable,
   ScrollView,
@@ -310,15 +311,12 @@ export default function CheckInScreen() {
       newUris = [...frameUris, photo.uri];
       setFrameUris(newUris);
 
-      if (newUris.length < 3) {
-        const nextInstruction = activeChallenge.steps[newUris.length]?.instruction || "Keep your face visible";
-        showNotice("Frame " + newUris.length + " of 3 received. Next prompt: " + nextInstruction + ". Capture continues automatically.", "info");
+      if (newUris.length < activeChallenge.steps.length) {
+        showNotice("Frame " + newUris.length + " of " + activeChallenge.steps.length + " captured. Follow the next direction symbol.", "info");
         return;
       }
 
-      setCameraMode("none");
-      setCameraReady(false);
-      showNotice("Checking face identity and active liveness with the configured provider…", "info");
+      showNotice("Checking the movement sequence and matching your face…", "info");
       const nextAssertion = await verifyActiveLiveness({
         token,
         sessionId,
@@ -327,6 +325,8 @@ export default function CheckInScreen() {
         frames: newUris,
       });
       await deleteTemporaryPhotos(newUris);
+      setCameraMode("none");
+      setCameraReady(false);
       setAssertionId(nextAssertion);
       setActiveChallenge(null);
       setFrameUris([]);
@@ -338,10 +338,10 @@ export default function CheckInScreen() {
       setAssertionId("");
       setCameraReady(false);
       setCameraMode("none");
-      setValidationTicket(null);
-      autoStartedTicketId.current = "";
+      autoStartedTicketId.current = validationTicket.validationId;
+      challengeStartedForTicket.current = "";
       scannerLock.current = false;
-      showNotice(getMessage(error) + " Scan a fresh QR and repeat the face check.", "error");
+      showNotice(getMessage(error) + " You can retry face verification for this QR if it is still valid.", "error");
     } finally {
       captureLock.current = false;
       setBusy(false);
@@ -404,10 +404,12 @@ export default function CheckInScreen() {
       setFrameUris([]);
       setPendingAttempt(null);
       setCameraReady(false);
-      setCameraMode("none");
+      // Keep the modal mounted and remount CameraView directly with the front
+      // camera, avoiding a close/reopen flicker after the QR is accepted.
+      setCameraMode("liveness");
       autoStartedTicketId.current = "";
       challengeStartedForTicket.current = "";
-      showNotice("Live QR validated by the server. Face matching and liveness will now start automatically.", "success");
+      showNotice("Live QR validated by the server. Follow the on-screen direction symbol in the front camera.", "success");
     } catch (error) {
       scannerLock.current = false;
       setCameraMode("none");
@@ -455,6 +457,32 @@ export default function CheckInScreen() {
     challengeStartedForTicket.current = "";
     showNotice("Class selected. Scan its live QR first; the app then runs the visible face/liveness check.", "info");
   };
+
+  const closeCameraModal = useCallback(() => {
+    if (busy) return;
+    const closingMode = cameraMode;
+    setCameraMode("none");
+    setCameraReady(false);
+    setEnrollmentCountdown(null);
+    setLivenessCountdown(null);
+    scannerLock.current = false;
+    captureLock.current = false;
+    automaticEnrollmentCapture.current = false;
+    automaticLivenessCapture.current = false;
+
+    if (closingMode === "liveness") {
+      void deleteTemporaryPhotos(frameUris);
+      setFrameUris([]);
+      setActiveChallenge(null);
+      challengeStartedForTicket.current = "";
+      autoStartedTicketId.current = validationTicket?.validationId || "";
+    } else if (closingMode === "scan") {
+      setValidationTicket(null);
+      setAssertionId("");
+      setFrameUris([]);
+      setActiveChallenge(null);
+    }
+  }, [busy, cameraMode, frameUris, validationTicket]);
 
   useEffect(() => {
     if (
@@ -525,7 +553,7 @@ export default function CheckInScreen() {
     ) return undefined;
 
     automaticLivenessCapture.current = true;
-    setLivenessCountdown(2);
+    setLivenessCountdown(3);
     let fired = false;
     const interval = setInterval(() => {
       setLivenessCountdown((remaining) => remaining !== null && Number.isFinite(remaining) && remaining > 1 ? remaining - 1 : 0);
@@ -535,7 +563,7 @@ export default function CheckInScreen() {
       automaticLivenessCapture.current = false;
       setLivenessCountdown(null);
       void captureLivenessFrame();
-    }, 2100);
+    }, 3100);
 
     return () => {
       clearInterval(interval);
@@ -764,40 +792,35 @@ export default function CheckInScreen() {
           </View>
         )}
 
-        {cameraMode !== "none" && (
-          <View style={styles.card}>
-            <View style={styles.sectionHeader}>
-              <Text style={styles.cardTitle}>
-                {cameraMode === "enroll" ? "Face enrollment" : cameraMode === "liveness" ? "Active liveness" : "Scan current QR"}
+      </ScrollView>
+      <Modal
+        visible={cameraMode !== "none"}
+        animationType="slide"
+        statusBarTranslucent={Platform.OS === "android"}
+        onRequestClose={closeCameraModal}
+      >
+        <View style={styles.cameraModalRoot}>
+          <View style={styles.cameraModalHeader}>
+            <View style={{ flex: 1 }}>
+              <Text style={styles.eyebrow}>
+                {cameraMode === "enroll" ? "SECURE FACE SETUP" : cameraMode === "liveness" ? "LIVE FACE CHECK" : "ATTENDANCE QR"}
               </Text>
-              <Pressable
-                disabled={busy}
-                onPress={() => {
-                  setCameraMode("none");
-                  setCameraReady(false);
-                  scannerLock.current = false;
-                  captureLock.current = false;
-                  automaticLivenessCapture.current = false;
-                  setEnrollmentCountdown(null);
-                  setLivenessCountdown(null);
-                  if (cameraMode === "liveness") {
-                    void deleteTemporaryPhotos(frameUris);
-                    setFrameUris([]);
-                    setActiveChallenge(null);
-                    challengeStartedForTicket.current = "";
-                    automaticLivenessCapture.current = false;
-                    setLivenessCountdown(null);
-                  }
-                }}
-              >
-                <Text style={styles.link}>Cancel</Text>
-              </Pressable>
+              <Text style={styles.cameraModalTitle}>
+                {cameraMode === "enroll" ? "Enroll your face" : cameraMode === "liveness" ? "Follow the movement prompt" : "Scan the lecturer's QR"}
+              </Text>
             </View>
+            <Pressable style={styles.cameraCloseButton} disabled={busy} onPress={closeCameraModal}>
+              <Text style={styles.cameraCloseButtonText}>Cancel</Text>
+            </Pressable>
+          </View>
+
+          <View style={styles.cameraPreviewShell}>
             <CameraView
               key={cameraMode}
               ref={cameraRef}
-              style={styles.camera}
+              style={styles.cameraModalPreview}
               facing={cameraMode === "scan" ? "back" : "front"}
+              mirror={false}
               onCameraReady={() => setCameraReady(true)}
               onMountError={(event) => {
                 setCameraReady(false);
@@ -811,34 +834,82 @@ export default function CheckInScreen() {
               barcodeScannerSettings={cameraMode === "scan" ? { barcodeTypes: ["qr"] } : undefined}
               onBarcodeScanned={cameraMode === "scan" ? (result) => void onQrScanned(result.data) : undefined}
             />
-            {cameraMode === "enroll" ? (
-              <View style={styles.cameraActions}>
-                <Text style={styles.muted}>Keep your full face inside the live preview. The camera indicator remains visible while the image is captured and sent for enrollment.</Text>
-                <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · AUTOMATIC CAPTURE" : "STARTING CAMERA…"}</Text>
-                {enrollmentCountdown !== null ? <Text style={styles.countdownText}>Capturing enrollment in {enrollmentCountdown}… keep your face visible.</Text> : null}
-                {busy || biometricBusy ? <Text style={styles.muted}>Submitting the enrollment image securely…</Text> : null}
+            {cameraMode === "scan" ? (
+              <View pointerEvents="none" style={styles.cameraGuideOverlay}>
+                <View style={styles.qrGuideFrame} />
               </View>
-            ) : cameraMode === "liveness" && activeChallenge && activeStep ? (
-              <View style={styles.cameraActions}>
-                <Text style={styles.eyebrow}>STEP {frameUris.length + 1} OF 3</Text>
-                <Text style={styles.cardTitle}>{activeStep.instruction}</Text>
-                <Text style={styles.muted}>Follow the instruction and keep your full face visible. The live preview stays on, and the camera captures each frame automatically.</Text>
-                <Text style={styles.cameraStatus}>CAMERA ACTIVE · LIVE MATCH + LIVENESS</Text>
-                {livenessCountdown !== null ? <Text style={styles.countdownText}>Capturing frame {frameUris.length + 1} in {livenessCountdown}…</Text> : null}
-                {busy ? <Text style={styles.muted}>Checking the captured frame…</Text> : null}
+            ) : (
+              <View pointerEvents="none" style={styles.cameraGuideOverlay}>
+                <View style={styles.faceGuideOval} />
               </View>
-            ) : cameraMode === "scan" ? (
-              <View style={styles.cameraActions}>
-                <Text style={styles.cardTitle}>Scan the lecturer&apos;s current QR</Text>
-                <Text style={styles.muted}>Keep the code inside the frame. When decoded, the app signs and submits immediately—no extra confirmation tap consumes the QR freshness window.</Text>
-              </View>
-            ) : null}
+            )}
           </View>
-        )}
-      </ScrollView>
+
+          <View style={styles.cameraPromptPanel}>
+            {cameraMode === "enroll" ? (
+              <>
+                <View style={styles.livenessPromptRow}>
+                  <Text style={styles.directionSymbol}>◉</Text>
+                  <View style={{ flex: 1, gap: 5 }}>
+                    <Text style={styles.cameraModalTitle}>Keep your full face in the oval</Text>
+                    <Text style={styles.muted}>Look straight ahead in good light. The app captures automatically; no capture button is needed.</Text>
+                  </View>
+                </View>
+                <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · AUTOMATIC ENROLLMENT" : "STARTING CAMERA…"}</Text>
+                {enrollmentCountdown !== null ? <Text style={styles.countdownText}>Capturing enrollment in {enrollmentCountdown}…</Text> : null}
+                {busy || biometricBusy ? <Text style={styles.muted}>Submitting the enrollment image securely…</Text> : null}
+              </>
+            ) : cameraMode === "liveness" && activeChallenge && activeStep ? (
+              <>
+                <View style={styles.livenessPromptRow}>
+                  <Text style={styles.directionSymbol}>{livenessSymbol(activeStep.step)}</Text>
+                  <View style={{ flex: 1, gap: 5 }}>
+                    <Text style={styles.eyebrow}>STEP {frameUris.length + 1} OF {activeChallenge.steps.length}</Text>
+                    <Text style={styles.cameraModalTitle}>{activeStep.instruction}</Text>
+                  </View>
+                </View>
+                <Text style={styles.muted}>Move as shown, keep both eyes and your full face visible, then hold the position until the countdown finishes.</Text>
+                <Text style={styles.cameraStatus}>{cameraReady ? "CAMERA ACTIVE · MOVEMENT CHECK" : "STARTING CAMERA…"}</Text>
+                {livenessCountdown !== null ? <Text style={styles.countdownText}>Capturing in {livenessCountdown}… hold the movement.</Text> : null}
+                {busy ? <Text style={styles.muted}>Analyzing the captured frame…</Text> : null}
+              </>
+            ) : cameraMode === "liveness" ? (
+              <View style={styles.livenessPromptRow}>
+                <ActivityIndicator size="large" color="#63d7bf" />
+                <View style={{ flex: 1, gap: 5 }}>
+                  <Text style={styles.cameraModalTitle}>{activeChallenge && frameUris.length >= activeChallenge.steps.length ? "Checking liveness and face match…" : "Preparing your secure challenge…"}</Text>
+                  <Text style={styles.muted}>Keep the face camera open. Your frames are processed for this check and temporary files are then deleted.</Text>
+                </View>
+              </View>
+            ) : (
+              <>
+                <View style={styles.livenessPromptRow}>
+                  <Text style={styles.directionSymbol}>▦</Text>
+                  <View style={{ flex: 1, gap: 5 }}>
+                    <Text style={styles.cameraModalTitle}>Scan the lecturer&apos;s current QR</Text>
+                    <Text style={styles.muted}>Keep the code inside the square. When it is read, the app validates it and opens the front-camera check automatically.</Text>
+                  </View>
+                </View>
+                <Text style={styles.cameraStatus}>{cameraReady ? "REAR CAMERA ACTIVE · QR SCANNER" : "STARTING CAMERA…"}</Text>
+              </>
+            )}
+            {notice ? <Notice message={notice} kind={noticeKind} /> : null}
+          </View>
+        </View>
+      </Modal>
       {notice ? <View style={styles.toastContainer} pointerEvents="box-none"><Notice message={notice} kind={noticeKind} /></View> : null}
     </View>
   );
+}
+
+function livenessSymbol(step?: string) {
+  switch (step) {
+    case "TURN_LEFT": return "←";
+    case "TURN_RIGHT": return "→";
+    case "MOVE_UP": return "↑";
+    case "MOVE_DOWN": return "↓";
+    default: return "◎";
+  }
 }
 
 function Notice({ message, kind }: { message: string; kind: "info" | "success" | "error" }) {
@@ -921,4 +992,17 @@ const styles = StyleSheet.create({
   dangerButton: { backgroundColor: "#852f3c", borderRadius: 12, minHeight: 43, alignItems: "center", justifyContent: "center" },
   camera: { width: "100%", height: 330, borderRadius: 14, overflow: "hidden", backgroundColor: "#101521" },
   cameraActions: { gap: 10, marginTop: 2 },
+  cameraModalRoot: { flex: 1, backgroundColor: "#0b1220", paddingHorizontal: 18, paddingTop: Platform.OS === "ios" ? 58 : 28, paddingBottom: 20, gap: 14 },
+  cameraModalHeader: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", gap: 12 },
+  cameraModalTitle: { color: "#e8eef7", fontSize: 19, lineHeight: 25, fontWeight: "800" },
+  cameraCloseButton: { minHeight: 42, justifyContent: "center", paddingHorizontal: 13, borderRadius: 12, borderWidth: 1, borderColor: "#41516a", backgroundColor: "#151f2e" },
+  cameraCloseButtonText: { color: "#d9e4f2", fontWeight: "800", fontSize: 13 },
+  cameraPreviewShell: { position: "relative", width: "100%", height: 300, borderRadius: 20, overflow: "hidden", backgroundColor: "#050a12", borderWidth: 1, borderColor: "#33445a" },
+  cameraModalPreview: { width: "100%", height: "100%" },
+  cameraGuideOverlay: { position: "absolute", left: 0, right: 0, top: 0, bottom: 0, justifyContent: "center", alignItems: "center" },
+  faceGuideOval: { width: 212, height: 240, borderWidth: 2, borderColor: "#70dfca", borderRadius: 140, backgroundColor: "rgba(11,18,32,0.03)" },
+  qrGuideFrame: { width: 234, height: 234, borderWidth: 3, borderColor: "#70dfca", borderRadius: 20, backgroundColor: "rgba(11,18,32,0.03)" },
+  cameraPromptPanel: { backgroundColor: "#151f2e", borderRadius: 18, padding: 15, gap: 11, borderWidth: 1, borderColor: "rgba(154,173,198,0.16)", flexShrink: 1 },
+  livenessPromptRow: { flexDirection: "row", alignItems: "center", gap: 14 },
+  directionSymbol: { width: 70, textAlign: "center", color: "#70dfca", fontSize: 56, lineHeight: 64, fontWeight: "900" },
 });

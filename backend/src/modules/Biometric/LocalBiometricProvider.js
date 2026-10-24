@@ -459,26 +459,54 @@ exports.verify =
  * Detect exactly one live face and return five-point landmarks for a single
  * frame. Requires the InsightFace Server liveness addon to be enabled.
  */
-exports.detect = async ({ imageBuffer, mimeType }) => {
+exports.detect = async ({ userId, imageBuffer, mimeType }) => {
     if (!Buffer.isBuffer(imageBuffer)) throw new AppError('Biometric frame is required', 400);
+    if (!userId || typeof userId !== 'string') throw new AppError('Authenticated student identity is required for liveness', 400);
+
     const form = new FormData();
     form.append('image', new Blob([imageBuffer], { type: mimeType || 'image/jpeg' }), 'liveness-frame.jpg');
     form.append('max_faces', '2');
     form.append('collection_id', process.env.BIOMETRIC_COLLECTION_ID || 'students');
+    // The provider must check face detection, passive PAD and enrolled identity
+    // within this same request/frame, rather than matching only the initial frame.
+    form.append('expected_person_id', userId);
     const result = await request({ path: '/v1/detect', method: 'POST', body: form });
+
     if (!Array.isArray(result?.faces) || result.faces.length !== 1) {
-        throw new AppError('Each active liveness frame must contain exactly one face', 401);
+        if (!Array.isArray(result?.faces) || result.faces.length === 0) {
+            throw new AppError('No face was detected in this liveness frame. Center your face in the oval, face the light, and keep your eyes and mouth visible.', 401);
+        }
+        throw new AppError('More than one face was detected. Keep only the enrolled student in the camera frame.', 401);
     }
+
     const face = result.faces[0];
     const liveness = face?.liveness;
-    if (!liveness) throw new AppError('Biometric provider did not evaluate liveness for a frame', 502);
-    if (liveness.status !== 'ok' || liveness.is_live !== true) throw new AppError('A liveness frame failed the provider PAD check', 401);
+    if (!liveness) throw new AppError('The provider could not evaluate passive liveness for this frame. Improve lighting and retry.', 502);
+    if (liveness.status !== 'ok') {
+        throw new AppError('Passive liveness could not be evaluated for this frame. Hold still briefly and keep your full face visible.', 401);
+    }
+    if (liveness.is_live !== true) {
+        throw new AppError('The frame did not pass passive liveness. Use the live front camera, not a photograph or screen.', 401);
+    }
     const liveScore = Number(liveness.live_score);
     if (!Number.isFinite(liveScore) || liveScore < 0 || liveScore > 1) throw new AppError('Biometric provider returned an invalid liveness score', 502);
+
+    if (result.identity_verified !== true || String(result.matched_person_id || '') !== userId) {
+        throw new AppError('The face did not match the enrolled student in this liveness frame. Keep the same person in view throughout the challenge.', 401);
+    }
+    const identitySimilarity = Number(result.identity_similarity);
+    if (!Number.isFinite(identitySimilarity) || identitySimilarity < 0 || identitySimilarity > 1) {
+        throw new AppError('Biometric provider returned an invalid identity similarity score', 502);
+    }
+
     const ActiveLiveness = require('./ActiveLiveness');
     return {
         livenessPassed: true,
         livenessScore: liveScore,
+        identityVerified: true,
+        providerUserId: userId,
+        identitySimilarity,
+        identityVerificationId: String(result.identity_request_id || result.request_id || ''),
         landmarks: ActiveLiveness.normalizeLandmarks(face.landmarks || face.keypoints)
     };
 };

@@ -857,12 +857,15 @@ exports.createActiveChallenge = async ({ userId, sessionId }) => {
     if (!enrollment) throw new AppError('Biometric enrollment not found', 409);
     const challengeId = crypto.randomUUID();
     const challenge = crypto.randomBytes(32).toString('base64url');
-    const directions = crypto.randomInt(0, 2) === 0
-        ? ['TURN_LEFT', 'TURN_RIGHT']
-        : ['TURN_RIGHT', 'TURN_LEFT'];
+    const directions = ['TURN_LEFT', 'TURN_RIGHT', 'MOVE_UP', 'MOVE_DOWN'];
+    // Shuffle all four motion prompts for each challenge; center is the baseline.
+    for (let index = directions.length - 1; index > 0; index--) {
+        const swapIndex = crypto.randomInt(index + 1);
+        [directions[index], directions[swapIndex]] = [directions[swapIndex], directions[index]];
+    }
     const steps = ['CENTER', ...directions];
     const stored = {
-        mode: 'ACTIVE_SEQUENCE_V1',
+        mode: 'ACTIVE_SEQUENCE_V2',
         userId: String(userId),
         sessionId: String(sessionId),
         challenge,
@@ -872,9 +875,11 @@ exports.createActiveChallenge = async ({ userId, sessionId }) => {
     const saved = await redisClient.set(activeChallengeKey(challengeId), JSON.stringify(stored), { NX: true, PX: CHALLENGE_TTL_MS });
     if (saved !== 'OK') throw new AppError('Could not create an active liveness challenge', 503);
     const instructions = {
-        CENTER: 'Face the camera straight on.',
-        TURN_LEFT: 'Turn your face so your nose moves toward the left edge of the image.',
-        TURN_RIGHT: 'Turn your face so your nose moves toward the right edge of the image.'
+        CENTER: 'Center your full face and look straight ahead.',
+        TURN_LEFT: 'Follow the left arrow: turn until your nose moves toward the left edge of the preview.',
+        TURN_RIGHT: 'Follow the right arrow: turn until your nose moves toward the right edge of the preview.',
+        MOVE_UP: 'Follow the up arrow: move your face slightly upward inside the preview.',
+        MOVE_DOWN: 'Follow the down arrow: move your face slightly downward inside the preview.'
     };
     return { challengeId, challenge, mode: stored.mode, steps: steps.map((step, index) => ({ index, step, instruction: instructions[step] })), expiresInMs: CHALLENGE_TTL_MS };
 };
@@ -882,15 +887,15 @@ exports.createActiveChallenge = async ({ userId, sessionId }) => {
 exports.verifyActiveSequence = async ({ userId, sessionId, challengeId, challenge, frames }) => {
     const ActiveLiveness = require('./ActiveLiveness');
     if (!challengeId || !challenge) throw new AppError('Active biometric challenge and nonce are required', 400);
-    if (!Array.isArray(frames) || frames.length !== 3 || frames.some((frame) => !Buffer.isBuffer(frame?.imageBuffer))) {
-        throw new AppError('Exactly three validated liveness frames are required', 400);
+    if (!Array.isArray(frames) || frames.length !== 5 || frames.some((frame) => !Buffer.isBuffer(frame?.imageBuffer))) {
+        throw new AppError('Exactly five validated liveness frames are required', 400);
     }
     const key = activeChallengeKey(challengeId);
     const raw = await redisClient.get(key);
     if (!raw) throw new AppError('Active biometric challenge expired or invalid', 401);
     let stored;
     try { stored = JSON.parse(raw); } catch { throw new AppError('Invalid active biometric challenge', 500); }
-    if (stored.mode !== 'ACTIVE_SEQUENCE_V1' || String(stored.userId) !== String(userId)) {
+    if (stored.mode !== 'ACTIVE_SEQUENCE_V2' || String(stored.userId) !== String(userId)) {
         throw new AppError('Active biometric challenge does not belong to this student', 403);
     }
     if (String(stored.sessionId) !== String(sessionId)) throw new AppError('Active biometric challenge does not belong to this session', 403);
@@ -903,18 +908,48 @@ exports.verifyActiveSequence = async ({ userId, sessionId, challengeId, challeng
     const consumed = await redisClient.eval(consumeScript, { keys: [key], arguments: [raw] });
     if (Number(consumed) !== 1) throw new AppError('Active biometric challenge was already used', 409);
 
-    // Check provider liveness and head-turn evidence for each frame. Serial
-    // provider calls bound inference concurrency better during campus peaks.
+    // Analyze every prompted movement. Serial provider calls bound inference
+    // concurrency better during campus peaks.
     const detections = [];
-    for (const frame of frames) {
-        detections.push(await provider.detect({ imageBuffer: frame.imageBuffer, mimeType: frame.mimeType || 'image/jpeg' }));
-    }
-    const movement = ActiveLiveness.assertActiveSequence(stored.steps, detections.map((item) => item.landmarks));
+    for (let index = 0; index < frames.length; index += 1) {
+        const frame = frames[index];
+        const detection = await provider.detect({
+            userId: String(userId),
+            imageBuffer: frame.imageBuffer,
+            mimeType: frame.mimeType || 'image/jpeg'
+        });
 
-    // Bind the final frame to the authenticated student's enrolled identity.
-    // Use the center-facing first frame for identity matching; a turned-face final frame can reduce recognition accuracy.
-    const result = await provider.verify({ userId, imageBuffer: frames[0].imageBuffer, mimeType: frames[0].mimeType || 'image/jpeg' });
-    if (result?.verified !== true || result?.livenessPassed !== true || result?.faceMatchPassed !== true || String(result?.providerUserId) !== String(userId)) {
+        // Face detection, passive PAD, and identity matching must all succeed
+        // for every motion frame. Do not accept a challenge where the student
+        // swaps to another person after the first frame.
+        if (
+            detection?.livenessPassed !== true ||
+            detection?.identityVerified !== true ||
+            String(detection?.providerUserId) !== String(userId)
+        ) {
+            throw new AppError(
+                'The same enrolled face must remain visible and live throughout the challenge (frame ' + (index + 1) + ')',
+                401
+            );
+        }
+        detections.push(detection);
+    }
+
+    const movement = ActiveLiveness.assertActiveSequence(stored.steps, detections.map((item) => item.landmarks));
+    const result = {
+        verified: true,
+        livenessPassed: detections.every((item) => item.livenessPassed === true),
+        faceMatchPassed: detections.every((item) => item.identityVerified === true),
+        providerUserId: String(userId),
+        similarity: Number(detections[0].identitySimilarity),
+        verificationId: detections[0].identityVerificationId || crypto.randomUUID()
+    };
+    if (
+        result.livenessPassed !== true ||
+        result.faceMatchPassed !== true ||
+        !Number.isFinite(result.similarity) ||
+        result.similarity < (Number(process.env.BIOMETRIC_MATCH_THRESHOLD) || 0.40)
+    ) {
         throw new AppError('Active biometric identity verification failed', 401);
     }
     const assertionId = crypto.randomUUID();

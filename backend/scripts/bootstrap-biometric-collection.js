@@ -63,7 +63,18 @@ async function bootstrapBiometricCollection({ env = process.env, fetchImpl = glo
 }
 
 if (require.main === module) {
-  bootstrapBiometricCollection()
+  // Print the target origin and collection to make local-vs-remote config clear.
+  // Never log the API key.
+  let validConfiguration = true;
+  try {
+    console.log("Provider origin: " + getBaseUrl(process.env.BIOMETRIC_BASE_URL));
+    console.log("Collection ID: " + String(process.env.BIOMETRIC_COLLECTION_ID || "students").trim());
+  } catch (error) {
+    console.error("BIOMETRIC COLLECTION CONFIGURATION FAILED:", error.message);
+    validConfiguration = false;
+    process.exitCode = 1;
+  }
+  if (validConfiguration) bootstrapBiometricCollection()
     .then((result) => {
       console.log("PASS provider authentication");
       console.log("PASS collection available");

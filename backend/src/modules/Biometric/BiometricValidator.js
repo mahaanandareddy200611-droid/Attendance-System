@@ -12,7 +12,7 @@ exports.verify = Joi.object({
 });
 
 
-// Used by POST /verify-active after the three frame fields have been parsed.
+// Used by POST /verify-active after the five motion-frame fields are parsed.
 exports.activeVerify = Joi.object({
     sessionId: Joi.string().trim().min(8).max(200).required(),
     challengeId: Joi.string().uuid().required(),
